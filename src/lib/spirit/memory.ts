@@ -249,6 +249,23 @@ export function saveConvEmbeddings(entries: ConvEmbeddingEntry[]) {
   writeJSON(convEmbeddingsFile, entries)
 }
 
+// ── Library Embedding Cache ───────────────────────────────────
+
+const libraryEmbeddingsFile = path.join(BASE, 'library', 'embeddings.json')
+
+export interface LibEmbeddingEntry {
+  id:  string
+  vec: number[]
+}
+
+export function getLibEmbeddings(): LibEmbeddingEntry[] {
+  return readJSON<LibEmbeddingEntry[]>(libraryEmbeddingsFile, [])
+}
+
+export function saveLibEmbeddings(entries: LibEmbeddingEntry[]) {
+  writeJSON(libraryEmbeddingsFile, entries)
+}
+
 export function upsertVow(vow: Vow) {
   const vows = getVows()
   const idx  = vows.findIndex(v => v.id === vow.id)

@@ -9,8 +9,8 @@ import { createLeetcodeAdapter } from '../../adapters/leetcode'
 import {
   getConversation, getRecentConversations,
   getConvEmbeddings, saveConvEmbeddings,
-  type ConvEmbeddingEntry,
 } from '../memory'
+import { hybridSearch, type HybridDoc } from '../hybrid-search'
 
 registerTool({
   name:        'read_user_blogs',
@@ -93,215 +93,104 @@ registerTool({
   }
 }, { displayName: '读取修为数据' })
 
+// ── embedding 构建辅助 ────────────────────────────────────────
+
+function makeEmbedder() {
+  const { OpenAIEmbeddings } = require('@langchain/openai')
+  return new OpenAIEmbeddings({
+    apiKey:    config.spirit?.apiKey,
+    modelName: 'text-embedding-3-small',
+    ...(config.spirit?.baseURL ? { configuration: { baseURL: config.spirit.baseURL } } : {}),
+  })
+}
+
+// ── 对话检索（hybrid：BM25 + 向量 → RRF）────────────────────
+
 registerTool({
   name:        'search_conversations',
-  description: '查询历史对话记录。可以按日期查某天的完整对话，也可以用关键词在近期对话中全文搜索。用于回答"我们上次说了什么""上周我提到过什么问题"之类的问题。',
+  description: '检索历史对话记录。按日期精确查，或用自然语言描述做混合检索（BM25 + 语义向量 RRF 融合）。用于"我们上次说了什么""之前提到过 XXX 的问题"之类的场景。',
   parameters: {
     type: 'object',
     properties: {
-      date:  {
-        type:        'string',
-        description: '查询指定日期的对话（YYYY-MM-DD），与 query 互斥；若两者都填则优先按日期查',
-      },
-      query: {
-        type:        'string',
-        description: '关键词，在近期对话中全文搜索（不区分大小写）',
-      },
-      days: {
-        type:        'number',
-        description: '搜索最近多少天的记录，默认 14，最大 60',
-      },
+      date:  { type: 'string', description: '精确查某天的完整对话（YYYY-MM-DD），填了此项则忽略 query' },
+      query: { type: 'string', description: '自然语言描述，混合检索近期对话内容' },
+      days:  { type: 'number', description: '搜索最近多少天，默认 30，最大 60' },
+      topK:  { type: 'number', description: '返回最相关的几条，默认 5' },
     },
     required: [],
   },
-}, async ({ date, query, days = 14 }) => {
-  // ── 按日期精确查 ──────────────────────────────────────────
+}, async ({ date, query, days = 30, topK = 5 }) => {
+  // ── 按日期精确查 ─────────────────────────────────────────
   if (date) {
     const conv = getConversation(date as string)
-    if (conv.messages.length === 0) {
-      return { content: `${date} 无对话记录`, brief: '无记录' }
-    }
+    if (conv.messages.length === 0) return { content: `${date} 无对话记录`, brief: '无记录' }
     const text = conv.messages.map(m =>
       `[${m.timestamp ?? ''}] ${m.role === 'user' ? '修士' : '器灵'}：${m.content}`
     ).join('\n\n')
-    return {
-      content: text,
-      brief:   `${date} 共 ${conv.messages.length} 条`,
-    }
+    return { content: text, brief: `${date} 共 ${conv.messages.length} 条` }
   }
 
-  // ── 关键词全文搜索 ────────────────────────────────────────
-  if (query) {
-    const keyword   = (query as string).toLowerCase()
-    const lookback  = Math.min(Number(days), 60)
-    const convs     = getRecentConversations(lookback)
-    const hits: { date: string; role: string; content: string; timestamp: string }[] = []
-
-    for (const conv of convs) {
-      for (const msg of conv.messages) {
-        if (msg.content.toLowerCase().includes(keyword)) {
-          hits.push({
-            date:      conv.date,
-            role:      msg.role === 'user' ? '修士' : '器灵',
-            content:   msg.content.length > 400 ? msg.content.slice(0, 400) + '…' : msg.content,
-            timestamp: msg.timestamp ?? '',
-          })
-        }
-      }
-    }
-
-    if (hits.length === 0) {
-      return { content: `近 ${lookback} 天内未找到包含「${query}」的对话`, brief: '无匹配' }
-    }
-
-    const text = hits.map(h => `[${h.date} ${h.timestamp}] ${h.role}：${h.content}`).join('\n\n---\n\n')
-    return {
-      content: text,
-      brief:   `命中 ${hits.length} 条（近 ${lookback} 天）`,
-    }
+  // ── 无 query：列出有记录的日期 ───────────────────────────
+  if (!query) {
+    const convs   = getRecentConversations(Math.min(Number(days), 60))
+    const summary = convs.map(c => `${c.date}：${c.messages.length} 条消息`).join('\n')
+    return { content: summary || '无对话记录', brief: `共 ${convs.length} 天有记录` }
   }
 
-  // ── 两者都不填：返回有记录的日期列表 ─────────────────────
+  // ── 混合检索 ─────────────────────────────────────────────
   const lookback = Math.min(Number(days), 60)
+  const k        = Math.min(Number(topK), 10)
   const convs    = getRecentConversations(lookback)
-  const summary  = convs.map(c => `${c.date}：${c.messages.length} 条消息`).join('\n')
-  return {
-    content: summary || `近 ${lookback} 天无对话记录`,
-    brief:   `共 ${convs.length} 天有记录`,
-  }
-}, { displayName: '查询对话历史' })
 
-// ── 语义搜索辅助函数 ──────────────────────────────────────────
-
-function cosine(a: number[], b: number[]): number {
-  let dot = 0, na = 0, nb = 0
-  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] ** 2; nb += b[i] ** 2 }
-  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0
-}
-
-/**
- * 增量构建 embedding 缓存：
- *   - 读已有缓存，找出 (date, msgIndex) 还没有向量的条目
- *   - 批量调用 embedding API，写回缓存
- *   - 返回完整缓存
- */
-async function buildEmbeddingIndex(days: number): Promise<ConvEmbeddingEntry[]> {
-  const { OpenAIEmbeddings } = await import('@langchain/openai')
-  const embedder = new OpenAIEmbeddings({
-    apiKey:    config.spirit?.apiKey,
-    // text-embedding-3-small：$0.02/1M tokens，足够个人站
-    modelName: 'text-embedding-3-small',
-    // 若用第三方兼容 API 则传 baseURL
-    ...(config.spirit?.baseURL ? { configuration: { baseURL: config.spirit.baseURL } } : {}),
-  })
-
-  const lookback = Math.min(Number(days), 60)
-  const convs    = getRecentConversations(lookback)
-  const cache    = getConvEmbeddings()
-
-  // 建已缓存条目的 set：key = "date::msgIndex"
-  const cached = new Set(cache.map(e => `${e.date}::${e.msgIndex}`))
-
-  // 找出需要新增 embedding 的消息
-  const pending: Omit<ConvEmbeddingEntry, 'vec'>[] = []
+  // 把每条消息展开为 HybridDoc
+  type MsgMeta = { date: string; msgIndex: number; role: string; content: string; timestamp: string }
+  const docs: (HybridDoc & { meta: MsgMeta })[] = []
   for (const conv of convs) {
     conv.messages.forEach((msg, idx) => {
       if (!msg.content.trim()) return
-      if (!cached.has(`${conv.date}::${idx}`)) {
-        pending.push({
-          date:      conv.date,
-          msgIndex:  idx,
-          role:      msg.role,
-          content:   msg.content,
-          timestamp: msg.timestamp ?? '',
-        })
+      docs.push({
+        id:   `${conv.date}::${idx}`,
+        text: msg.content,
+        meta: { date: conv.date, msgIndex: idx, role: msg.role, content: msg.content, timestamp: msg.timestamp ?? '' },
+      })
+    })
+  }
+  if (docs.length === 0) return { content: '无可检索的对话记录', brief: '无索引' }
+
+  // 读 embedding 缓存
+  const cache    = getConvEmbeddings()
+  const cacheMap = new Map(cache.map(e => [`${e.date}::${e.msgIndex}`, e.vec]))
+
+  const results = await hybridSearch(docs, query as string, {
+    topK:        k,
+    embedder:    makeEmbedder(),
+    getCachedVec: id => cacheMap.get(id),
+    onNewVecs:   newVecs => {
+      for (const { id, vec } of newVecs) {
+        cacheMap.set(id, vec)
+        const [d, i] = id.split('::')
+        const docMeta = docs.find(doc => doc.id === id)?.meta
+        if (docMeta) {
+          cache.push({ date: d, msgIndex: Number(i), role: docMeta.role as 'user'|'assistant', content: docMeta.content, timestamp: docMeta.timestamp, vec })
+        }
       }
-    })
-  }
-
-  if (pending.length > 0) {
-    // 批量 embed（LangChain 自动分批，避免超 token 限制）
-    const vecs = await embedder.embedDocuments(pending.map(p => p.content))
-    const newEntries: ConvEmbeddingEntry[] = pending.map((p, i) => ({ ...p, vec: vecs[i] }))
-    const updated = [...cache, ...newEntries]
-    saveConvEmbeddings(updated)
-    return updated
-  }
-
-  return cache
-}
-
-registerTool({
-  name:        'semantic_search_conversations',
-  description: '用语义相似度在历史对话中检索相关内容，比关键词搜索更智能，能找到意思相近但措辞不同的内容。用于"我之前提到过…""我们讨论过关于…的问题"之类的模糊回忆。',
-  parameters: {
-    type: 'object',
-    properties: {
-      query: {
-        type:        'string',
-        description: '想找什么内容的描述，越具体越好',
-      },
-      days: {
-        type:        'number',
-        description: '搜索最近多少天，默认 30，最大 60',
-      },
-      topK: {
-        type:        'number',
-        description: '返回最相关的几条，默认 5，最大 10',
-      },
+      saveConvEmbeddings(cache)
     },
-    required: ['query'],
-  },
-}, async ({ query, days = 30, topK = 5 }) => {
-  try {
-    const { OpenAIEmbeddings } = await import('@langchain/openai')
-    const embedder = new OpenAIEmbeddings({
-      apiKey:    config.spirit?.apiKey,
-      modelName: 'text-embedding-3-small',
-      ...(config.spirit?.baseURL ? { configuration: { baseURL: config.spirit.baseURL } } : {}),
-    })
+  })
 
-    // 1. 构建/更新索引
-    const entries = await buildEmbeddingIndex(days)
-    if (entries.length === 0) {
-      return { content: '暂无可检索的对话历史', brief: '无索引' }
-    }
+  if (results.length === 0) return { content: `未找到与「${query}」相关的历史对话`, brief: '无匹配' }
 
-    // 2. 对 query 做 embedding
-    const queryVec = await embedder.embedQuery(query as string)
+  const docMap = new Map(docs.map(d => [d.id, d.meta]))
+  const text   = results.map(r => {
+    const m       = docMap.get(r.id)!
+    const role    = m.role === 'user' ? '修士' : '器灵'
+    const snippet = m.content.length > 400 ? m.content.slice(0, 400) + '…' : m.content
+    const tags    = [r.bm25Rank !== null ? 'BM25' : '', r.vecRank !== null ? '向量' : ''].filter(Boolean).join('+')
+    return `[${m.date} ${m.timestamp}] (${tags} RRF=${r.rrfScore.toFixed(3)})\n${role}：${snippet}`
+  }).join('\n\n---\n\n')
 
-    // 3. 按相似度排序，取 top-k
-    const k = Math.min(Number(topK), 10)
-    const scored = entries
-      .map(e => ({ ...e, score: cosine(queryVec, e.vec) }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, k)
-
-    if (scored.length === 0 || scored[0].score < 0.3) {
-      return { content: `未找到与「${query}」语义相关的历史对话`, brief: '无匹配' }
-    }
-
-    const text = scored.map(e => {
-      const role    = e.role === 'user' ? '修士' : '器灵'
-      const snippet = e.content.length > 400 ? e.content.slice(0, 400) + '…' : e.content
-      return `[${e.date} ${e.timestamp}] 相似度 ${(e.score * 100).toFixed(0)}%\n${role}：${snippet}`
-    }).join('\n\n---\n\n')
-
-    return {
-      content: text,
-      brief:   `找到 ${scored.length} 条相关记录（最高相似度 ${(scored[0].score * 100).toFixed(0)}%）`,
-    }
-  } catch (err) {
-    // embedding API 不可用时降级到关键词搜索
-    const keyword = (query as string).toLowerCase()
-    const convs   = getRecentConversations(Math.min(Number(days), 60))
-    const hits    = convs.flatMap(c => c.messages
-      .filter(m => m.content.toLowerCase().includes(keyword))
-      .map(m => `[${c.date}] ${m.role === 'user' ? '修士' : '器灵'}：${m.content.slice(0, 300)}`)
-    ).slice(0, Number(topK))
-    const msg = hits.length > 0
-      ? `（embedding 不可用，降级为关键词匹配）\n\n${hits.join('\n\n---\n\n')}`
-      : `embedding 不可用，关键词搜索也无匹配：${err instanceof Error ? err.message : String(err)}`
-    return { content: msg, brief: `降级搜索：${hits.length} 条` }
+  return {
+    content: text,
+    brief:   `找到 ${results.length} 条（近 ${lookback} 天，混合检索）`,
   }
-}, { displayName: '语义检索对话' })
+}, { displayName: '检索对话历史' })

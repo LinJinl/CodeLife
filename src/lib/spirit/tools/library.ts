@@ -7,6 +7,8 @@ import path from 'path'
 import OpenAI from 'openai'
 import { registerTool } from '../registry'
 import config from '../../../../codelife.config'
+import { getLibEmbeddings, saveLibEmbeddings } from '../memory'
+import { hybridSearch, type HybridDoc } from '../hybrid-search'
 
 export interface LibraryEntry {
   id:       string
@@ -104,30 +106,60 @@ registerTool({
   }
 }, { displayName: '收藏至藏经阁' })
 
+function makeEmbedder() {
+  const { OpenAIEmbeddings } = require('@langchain/openai')
+  return new OpenAIEmbeddings({
+    apiKey:    config.spirit?.apiKey,
+    modelName: 'text-embedding-3-small',
+    ...(config.spirit?.baseURL ? { configuration: { baseURL: config.spirit.baseURL } } : {}),
+  })
+}
+
 registerTool({
   name:        'search_library',
-  description: '在已收藏的文档中检索，支持关键词和标签过滤',
+  description: '在已收藏的文档中检索，混合检索（BM25 + 语义向量 RRF 融合），支持标签前过滤',
   parameters: {
     type: 'object',
     properties: {
-      query: { type: 'string', description: '检索关键词' },
-      tag:   { type: 'string', description: '按标签过滤（可选）' },
+      query: { type: 'string', description: '检索描述，自然语言' },
+      tag:   { type: 'string', description: '先按标签过滤，再检索（可选）' },
+      topK:  { type: 'number', description: '返回数量，默认 6' },
     },
     required: ['query'],
   },
-}, async ({ query, tag }) => {
-  const q       = (query as string).toLowerCase()
-  const results = loadLibraryIndex().filter(e => {
-    const hit = e.title.toLowerCase().includes(q)
-      || e.summary.toLowerCase().includes(q)
-      || e.tags.some(t => t.toLowerCase().includes(q))
-    return hit && (!tag || e.tags.includes(tag as string))
-  }).slice(0, 6)
+}, async ({ query, tag, topK = 6 }) => {
+  let entries = loadLibraryIndex()
+  if (tag) entries = entries.filter(e => e.tags.includes(tag as string))
+  if (entries.length === 0) return { content: '藏经阁中未找到相关文档。', brief: '无匹配结果' }
+
+  // 每条 doc 的 text = title + summary + tags（多字段拼接，BM25 和向量都基于此）
+  const docs: HybridDoc[] = entries.map(e => ({
+    id:   e.id,
+    text: [e.title, e.summary, e.tags.join(' '), e.category].join(' '),
+  }))
+
+  // 读 embedding 缓存
+  const cache    = getLibEmbeddings()
+  const cacheMap = new Map(cache.map(e => [e.id, e.vec]))
+
+  const results = await hybridSearch(docs, query as string, {
+    topK:         Math.min(Number(topK), 10),
+    embedder:     makeEmbedder(),
+    getCachedVec: id => cacheMap.get(id),
+    onNewVecs:    newVecs => {
+      for (const { id, vec } of newVecs) cacheMap.set(id, vec)
+      saveLibEmbeddings(Array.from(cacheMap.entries()).map(([id, vec]) => ({ id, vec })))
+    },
+  })
 
   if (results.length === 0) return { content: '藏经阁中未找到相关文档。', brief: '无匹配结果' }
+
+  const entryMap = new Map(entries.map(e => [e.id, e]))
+  const matched  = results.map(r => entryMap.get(r.id)).filter(Boolean) as LibraryEntry[]
+
   return {
-    content: JSON.stringify(results),
-    brief:   `找到 ${results.length} 篇相关文档`,
+    content: JSON.stringify(matched),
+    brief:   `找到 ${matched.length} 篇相关文档（混合检索）`,
   }
 }, { displayName: '检索藏经阁' })
 
