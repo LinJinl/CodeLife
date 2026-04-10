@@ -228,6 +228,27 @@ export function getRecentConversations(days: number): Conversation[] {
   return result
 }
 
+// ── Conversation Embedding Cache ──────────────────────────────
+
+export interface ConvEmbeddingEntry {
+  date:      string
+  msgIndex:  number
+  role:      'user' | 'assistant'
+  content:   string
+  timestamp: string
+  vec:       number[]
+}
+
+const convEmbeddingsFile = path.join(BASE, 'conv_embeddings.json')
+
+export function getConvEmbeddings(): ConvEmbeddingEntry[] {
+  return readJSON<ConvEmbeddingEntry[]>(convEmbeddingsFile, [])
+}
+
+export function saveConvEmbeddings(entries: ConvEmbeddingEntry[]) {
+  writeJSON(convEmbeddingsFile, entries)
+}
+
 export function upsertVow(vow: Vow) {
   const vows = getVows()
   const idx  = vows.findIndex(v => v.id === vow.id)
