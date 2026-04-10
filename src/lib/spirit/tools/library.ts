@@ -128,7 +128,7 @@ function makeEmbedder() {
 
 registerTool({
   name:        'search_library',
-  description: '在已收藏的文档中检索，混合检索（BM25 + 语义向量 RRF 融合），支持标签前过滤',
+  description: '在藏经阁（从外部收藏的文章、资料）中混合检索（BM25 + 语义向量 RRF 融合）。用于"藏经阁里有没有关于…""收藏的资料中找…"。注意：这是搜索外部收藏，不是用户本人写的博客。',
   parameters: {
     type: 'object',
     properties: {

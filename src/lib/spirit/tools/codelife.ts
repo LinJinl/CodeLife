@@ -96,7 +96,7 @@ registerTool({
 
 registerTool({
   name:        'search_blog_posts',
-  description: '在用户自己写的博客文章中混合检索（BM25 + 语义向量 RRF 融合）。用于"我写过关于…的文章吗""找一下我之前写的 XXX 相关内容"。',
+  description: '在用户自己撰写的博客文章中混合检索（BM25 + 语义向量 RRF 融合）。用于"我写过关于…""我的文章里有没有…""搜索我的文档/笔记/博客中关于…的内容"。注意：这是搜索用户本人写的内容，不是外部收藏。',
   parameters: {
     type: 'object',
     properties: {
