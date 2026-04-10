@@ -15,9 +15,19 @@ export interface BlogPost {
   pointsLabel: string // 顿悟 / 大悟
 }
 
+/** getPost() 返回的正文详情部分 */
+export interface PostContent {
+  content: string
+  excerpt: string
+  wordCount: number
+  readingMinutes: number
+  pointsEarned: number
+  pointsLabel: string
+}
+
 export interface BlogAdapter {
-  /** 获取所有已发布文章（最新在前） */
+  /** 获取所有已发布文章元数据（最新在前，content 为空字符串） */
   getPosts(): Promise<BlogPost[]>
-  /** 通过 slug 获取单篇 */
-  getPost(slug: string): Promise<BlogPost | null>
+  /** 通过 pageId 获取正文。不做 null-catch，错误直接抛出让调用方决定是否缓存 */
+  getPostContentById(pageId: string): Promise<PostContent>
 }

@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import matter from 'gray-matter'
-import type { BlogAdapter, BlogPost } from './types'
+import type { BlogAdapter, BlogPost, PostContent } from './types'
 import type { BlogConfig, CultivationConfig } from '@/lib/config'
 
 function calcPoints(wordCount: number, cult: CultivationConfig) {
@@ -62,8 +62,18 @@ export class LocalMDXAdapter implements BlogAdapter {
       .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
   }
 
-  async getPost(slug: string): Promise<BlogPost | null> {
+  /** local-mdx: id === slug，直接从 getPosts() 找 */
+  async getPostContentById(id: string): Promise<PostContent> {
     const posts = await this.getPosts()
-    return posts.find(p => p.slug === slug) ?? null
+    const post = posts.find(p => p.id === id)
+    if (!post) throw new Error(`[LocalMDX] post not found: ${id}`)
+    return {
+      content:        post.content,
+      excerpt:        post.excerpt,
+      wordCount:      post.wordCount,
+      readingMinutes: post.readingMinutes,
+      pointsEarned:   post.pointsEarned,
+      pointsLabel:    post.pointsLabel,
+    }
   }
 }

@@ -26,7 +26,7 @@ import path from 'path'
 import { Client } from '@notionhq/client'
 import { NotionToMarkdown } from 'notion-to-md'
 import type { PageObjectResponse } from '@notionhq/client/build/src/api-endpoints'
-import type { BlogAdapter, BlogPost } from './types'
+import type { BlogAdapter, BlogPost, PostContent } from './types'
 import type { BlogConfig, CultivationConfig } from '@/lib/config'
 
 // ── 字数持久缓存 ───────────────────────────────────────────────
@@ -207,27 +207,25 @@ export class NotionBlogAdapter implements BlogAdapter {
     )
   }
 
-  async getPost(slug: string): Promise<BlogPost | null> {
-    const { pages, titleField, slugField, categoryField, dateField } = await this.queryPages()
-    const page = pages.find(p => {
-      const meta = this.pageToPost(p, titleField, slugField, categoryField, dateField, 0)
-      return meta.slug === slug
-    })
-    if (!page) return null
-
-    const mdBlocks = await this.n2m.pageToMarkdown(page.id)
+  /** 通过 Notion pageId 直接拉取正文，不重复查询数据库列表 */
+  async getPostContentById(pageId: string): Promise<PostContent> {
+    const mdBlocks = await this.n2m.pageToMarkdown(pageId)
     const content  = this.n2m.toMarkdownString(mdBlocks).parent
     const wc       = countWords(content)
     const { points, label } = calcPoints(wc, this.cult)
 
-    // 顺便更新字数缓存
-    const cache = loadWcCache()
-    cache[page.id] = { wordCount: wc, lastEdited: page.last_edited_time }
-    saveWcCache(cache)
+    // 顺便更新字数缓存（保持 getPosts() 的 WC 准确）
+    try {
+      const page = await this.notion.pages.retrieve({ page_id: pageId })
+      const lastEdited = (page as { last_edited_time: string }).last_edited_time
+      const cache = loadWcCache()
+      cache[pageId] = { wordCount: wc, lastEdited }
+      saveWcCache(cache)
+    } catch {
+      // WC 缓存写失败不影响正文返回
+    }
 
-    const base = this.pageToPost(page, titleField, slugField, categoryField, dateField, wc)
     return {
-      ...base,
       content,
       excerpt:        content.slice(0, 160).replace(/\n/g, ' ') + '…',
       wordCount:      wc,

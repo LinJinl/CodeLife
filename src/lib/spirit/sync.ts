@@ -298,9 +298,9 @@ export async function preIndexEmbeddings(llm: SimpleLLM): Promise<{ blogNew: num
       const batch = needContent.slice(i, i + 3)
       await Promise.all(batch.map(async p => {
         try {
-          const full    = await adapter.getPost(p.slug)
-          const content = full?.content
-            ? full.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+          const detail  = await adapter.getPostContentById(p.id)
+          const content = detail.content
+            ? detail.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
             : p.excerpt ?? ''
           postMap.set(p.slug, {
             slug: p.slug, title: p.title, excerpt: p.excerpt ?? '',

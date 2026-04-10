@@ -9,7 +9,7 @@
  * 依赖：npm install @tryghost/content-api
  */
 
-import type { BlogAdapter, BlogPost } from './types'
+import type { BlogAdapter, BlogPost, PostContent } from './types'
 import type { BlogConfig, CultivationConfig } from '@/lib/config'
 
 function countWords(text: string): number {
@@ -44,8 +44,11 @@ export class GhostBlogAdapter implements BlogAdapter {
     )
   }
 
-  async getPost(slug: string): Promise<BlogPost | null> {
-    const posts = await this.getPosts()
-    return posts.find(p => p.slug === slug) ?? null
+  async getPostContentById(_pageId: string): Promise<PostContent> {
+    // Ghost adapter 未实现，与 getPosts() 共享同一 "未安装依赖" 错误
+    throw new Error(
+      '[CodeLife] Ghost adapter: 请先运行 npm install @tryghost/content-api，' +
+      '然后参考注释实现 getPostContentById()'
+    )
   }
 }
