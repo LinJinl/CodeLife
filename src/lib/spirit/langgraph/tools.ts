@@ -12,6 +12,7 @@ import { z }                      from 'zod'
 import '../tools/index'
 import {
   getToolDefinitions,
+  getRegisteredTool,
   callTool,
   isToolVisibleToAgent,
 }                                 from '../registry'
@@ -68,10 +69,21 @@ export const AGENT_DISPLAY: Record<string, string> = {
 
 // ── 构建 LangChain 工具列表 ───────────────────────────────────
 
+const APPROVAL_TOKEN_PROP: JSONSchemaProp = {
+  type:        'string',
+  description: '用户批准后服务端颁发的一次性令牌。首次调用工具若返回权限请求，以返回值中的令牌重新调用此工具。',
+}
+
 function buildAllLangChainTools(): DynamicStructuredTool[] {
   return getToolDefinitions().map(def => {
-    const props    = ((def.parameters as Record<string, unknown>).properties ?? {}) as Record<string, JSONSchemaProp>
-    const required = ((def.parameters as Record<string, unknown>).required   ?? []) as string[]
+    const baseProps = ((def.parameters as Record<string, unknown>).properties ?? {}) as Record<string, JSONSchemaProp>
+    const required  = ((def.parameters as Record<string, unknown>).required   ?? []) as string[]
+    const registered = getRegisteredTool(def.name)
+
+    // 需要用户批准的工具自动注入 approval_token 可选参数
+    const props: Record<string, JSONSchemaProp> = registered?.requiresApproval
+      ? { ...baseProps, approval_token: APPROVAL_TOKEN_PROP }
+      : baseProps
 
     return new DynamicStructuredTool({
       name:        def.name,

@@ -37,6 +37,12 @@ export const GraphState = Annotation.Root({
     reducer: (left, right) => ({ ...left, ...right }),
     default: () => ({}),
   }),
+
+  /** quickClassify 判定为 direct 时跳过 Planner，直接进 qingxiao */
+  usePlanner: Annotation<boolean>({
+    reducer: (_, update) => update,
+    default: () => true,
+  }),
 })
 
 export type GraphStateType = typeof GraphState.State

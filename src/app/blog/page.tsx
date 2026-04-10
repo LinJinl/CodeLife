@@ -73,7 +73,7 @@ export default async function BlogPage({
 
         {posts.length === 0 ? (
           <p style={{ color: 'var(--ink-dim)', textAlign: 'center', letterSpacing: 3, lineHeight: 2 }}>
-            {tag ? `尚无「${tag}」相关心法` : '藏经阁空空如也'}
+            {tag ? `尚无「${tag}」相关心法` : '心法卷轴空空如也'}
           </p>
         ) : posts.map(post => (
           <a href={`/blog/${post.slug}`} key={post.id} style={{

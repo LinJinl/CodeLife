@@ -78,7 +78,7 @@ async function analyzeContent(
 
 registerTool({
   name:        'collect_document',
-  description: '将文章内容收藏到藏经阁，自动分析生成摘要和标签。用户提供文章标题和内容（或已由 fetch_url 获取），可附带原文链接。',
+  description: '将文章内容收藏到藏经阁，自动分析生成摘要和标签。【授权要求】只有用户明确说"收藏""存到藏经阁""帮我加进去"等指令后才可调用；"找一下""查一下""看看"不构成授权。',
   parameters: {
     type: 'object',
     properties: {
@@ -115,7 +115,11 @@ registerTool({
     content: JSON.stringify({ ok: true, entry }),
     brief:   `已收藏「${entry.title}」，标签：${entry.tags.join('、') || '无'}`,
   }
-}, { displayName: '收藏至藏经阁' })
+}, {
+  displayName:      '收藏至藏经阁',
+  requiresApproval: true,
+  approvalSummary:  (args) => `收藏「${String(args.title ?? '').slice(0, 30)}」到藏经阁`,
+})
 
 function makeEmbedder() {
   const { OpenAIEmbeddings } = require('@langchain/openai')
@@ -169,9 +173,12 @@ registerTool({
   const matched  = results.map(r => entryMap.get(r.id)).filter(Boolean) as LibraryEntry[]
   const total    = loadLibraryIndex().length  // 全库总数，供模型准确引用
 
+  const topTitles = matched.slice(0, 3).map(e => e.title).join(' / ')
   return {
     content: JSON.stringify({ total, matched }),
-    brief:   `藏经阁共 ${total} 篇，本次召回 ${matched.length} 篇相关文档`,
+    brief:   matched.length > 0
+      ? `召回 ${matched.length} 篇：${topTitles}`
+      : `藏经阁共 ${total} 篇，无匹配`,
   }
 }, { displayName: '检索藏经阁' })
 

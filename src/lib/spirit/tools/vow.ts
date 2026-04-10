@@ -131,7 +131,11 @@ metric 必须选择系统能自动检测的类型：
     content: `誓约「${vow.title}」已创建（ID: ${vow.id}）。\n截止 ${vow.deadline}，剩余 ${daysLeft} 天。\n\n子目标：\n${goalLines}\n\n系统每次触发同步时会自动比对当日数据，用户无需调用任何工具来标记完成。`,
     brief:   `「${vow.title}」已立，截止 ${vow.deadline}（剩余 ${daysLeft} 天）`,
   }
-}, { displayName: '立下誓约' })
+}, {
+  displayName:      '立下誓约',
+  requiresApproval: true,
+  approvalSummary:  (args) => `创建誓约「${String(args.title ?? '')}」截止 ${String(args.deadline ?? '')}`,
+})
 
 // ── update_vow ────────────────────────────────────────────────
 
@@ -233,4 +237,8 @@ registerTool({
     content: `誓约「${removed.title}」（ID: ${removed.id}）已删除。`,
     brief:   `「${removed.title}」已删除`,
   }
-}, { displayName: '删除誓约' })
+}, {
+  displayName:      '删除誓约',
+  requiresApproval: true,
+  approvalSummary:  (args) => `删除誓约（ID: ${String(args.vowId ?? '')}）`,
+})

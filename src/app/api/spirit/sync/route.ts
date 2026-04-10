@@ -13,6 +13,7 @@ import {
   shouldUpdatePersona,
   preIndexEmbeddings,
 } from '@/lib/spirit/sync'
+import { extractSkills, shouldExtractSkills } from '@/lib/spirit/skill-extractor'
 import { buildChatModel }  from '@/lib/spirit/langgraph/agents'
 import { invalidateAgentCache } from '@/lib/spirit/langgraph/agents'
 import config from '../../../../../codelife.config'
@@ -43,6 +44,9 @@ export async function POST(req: NextRequest) {
     }
     if (shouldUpdatePersona()) {
       tasks.push(updatePersona(llm).catch(e => console.warn('[sync] persona 更新失败:', e)))
+    }
+    if (shouldExtractSkills()) {
+      tasks.push(extractSkills(14, llm).catch(e => console.warn('[sync] 技能提炼失败:', e)))
     }
 
     // 等待周期任务（通常很快，模型返回 JSON 即可）

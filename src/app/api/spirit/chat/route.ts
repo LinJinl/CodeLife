@@ -12,17 +12,43 @@
 
 import { NextRequest }         from 'next/server'
 import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages'
+import type { BaseMessage }    from '@langchain/core/messages'
 import config                  from '../../../../../codelife.config'
 import { encodeEvent }         from '@/lib/spirit/protocol'
 import { getCompiledGraph, getRecursionLimit } from '@/lib/spirit/langgraph/graph'
-import { getDailyLog }         from '@/lib/spirit/memory'
+import { getDailyLog, getConversation }        from '@/lib/spirit/memory'
 import { syncToday }           from '@/lib/spirit/sync'
+import { quickClassify }       from '@/lib/spirit/langgraph/classify'
 // recursionLimit 在 planner 解析出并行任务数后才能精确计算，
 // 这里保守地用最大值（5 个并行任务）
 const DEFAULT_PARALLEL = 5
 import { translateToSpiritEvents }             from '@/lib/spirit/langgraph/stream'
 
 export const runtime = 'nodejs'
+
+/**
+ * 把今日已保存对话的最后 N 条作为真实 BaseMessage prepend 到消息前
+ * 仅在前端消息尚未包含今日历史时注入（避免单次长会话重复）
+ */
+function loadTodayHistory(
+  currentMessages: { role: string; content: string }[],
+): BaseMessage[] {
+  const today = new Date().toISOString().slice(0, 10)
+  const conv  = getConversation(today)
+  if (conv.messages.length === 0) return []
+
+  const saved = conv.messages.slice(-6)   // 最多取 6 条
+
+  // 去重：若前端消息已包含今日历史末尾内容（同一会话），不再 prepend
+  const lastSavedSnippet = saved.at(-1)?.content.slice(0, 50) ?? ''
+  if (lastSavedSnippet && currentMessages.some(m => m.content.includes(lastSavedSnippet))) {
+    return []
+  }
+
+  return saved.map(m =>
+    m.role === 'user' ? new HumanMessage(m.content) : new AIMessage(m.content)
+  )
+}
 
 export async function POST(req: NextRequest) {
   const spirit = config.spirit
@@ -41,11 +67,25 @@ export async function POST(req: NextRequest) {
   }
 
   // 把前端消息历史转换为 LangChain BaseMessage
-  const langchainMessages = messages.map(m => {
+  const currentMsgs = messages.map(m => {
     if (m.role === 'system')    return new SystemMessage(m.content)
     if (m.role === 'assistant') return new AIMessage(m.content)
     return new HumanMessage(m.content)
   })
+
+  // 今日已保存的历史作为真实消息 prepend（Issue 3）
+  const todayHistory      = loadTodayHistory(messages)
+  const langchainMessages = [...todayHistory, ...currentMsgs]
+
+  // quickClassify：规则判断是否需要 Planner（Issue 4）
+  // agentId 指定时走调试直通图，不受此影响
+  const usePlanner = !agentId || agentId === 'auto'
+    ? quickClassify(langchainMessages) === 'plan'
+    : false
+
+  const lastUserMsg = langchainMessages.findLast(m => m._getType() === 'human')
+  const msgPreview  = (typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '').slice(0, 80)
+  console.log(`[spirit] chat request: usePlanner=${usePlanner} msgs=${langchainMessages.length} "${msgPreview}"`)
 
   const graph          = getCompiledGraph(agentId)
   const recursionLimit = getRecursionLimit(DEFAULT_PARALLEL)
@@ -57,7 +97,7 @@ export async function POST(req: NextRequest) {
 
       try {
         const eventStream = graph.streamEvents(
-          { messages: langchainMessages },
+          { messages: langchainMessages, usePlanner },
           { version: 'v2', recursionLimit },
         )
 
@@ -65,8 +105,11 @@ export async function POST(req: NextRequest) {
           push(encodeEvent(spiritEvent))
           if (spiritEvent.type === 'done') break
         }
+        console.log('[spirit] chat done')
       } catch (err) {
-        push(encodeEvent({ type: 'error', message: err instanceof Error ? err.message : String(err) }))
+        const errMsg = err instanceof Error ? err.message : String(err)
+        console.error('[spirit] chat error:', errMsg)
+        push(encodeEvent({ type: 'error', message: errMsg }))
       } finally {
         ctrl.close()
       }

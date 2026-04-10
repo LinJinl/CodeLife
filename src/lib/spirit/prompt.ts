@@ -1,88 +1,70 @@
 /**
  * 青霄 System Prompt 构建器
- * 把三层记忆注入成完整的系统提示
+ *
+ * 分层设计（Issue 1）：
+ *   Tier 1（永远注入，<800 tokens）：身份 + 规则 + 时间 + 今日摘要 + 誓约 + 近 5 天对话摘要
+ *   Tier 2（工具按需拉取）：历史日志 / 周规律 / 技能卡 / 对话原文搜索
+ *
+ * 今日对话历史（Issue 3）：
+ *   以真实 BaseMessage 形式由 chat/route.ts prepend 到 messages 数组，
+ *   不再在此注入原文（避免格式化文本 vs 消息对象的双轨问题）。
  */
 
-import { getRecentDailyLogs, getWeeklyPatterns, getPersona, getActiveVows, getRecentConversations } from './memory'
+import {
+  getDailyLog, getPersona, getActiveVows, getRecentSummaries,
+} from './memory'
 import config from '../../../codelife.config'
-
-function formatDailyLogs(days: number): string {
-  const logs = getRecentDailyLogs(days)
-  if (logs.length === 0) return '无记录。'
-
-  return logs.map(log => {
-    if (log.activities.length === 0) return `${log.date}：无修炼`
-    const parts = log.activities.map(a => {
-      const label = { blog: '著述', leetcode: '炼丹', github: '铸剑' }[a.type]
-      const detail = a.titles?.length ? `（${a.titles.slice(0, 2).join('、')}）` : ''
-      return `${label} ${a.count} 项${detail} +${a.points}修为`
-    })
-    return `${log.date}：${parts.join('　')}　连续第 ${log.streakDay} 日`
-  }).join('\n')
-}
-
-function formatPatterns(weeks: number): string {
-  const patterns = getWeeklyPatterns(weeks)
-  if (patterns.length === 0) return '尚无周期记录。'
-
-  return patterns.map(p => {
-    const flags = p.flags.length ? `　隐患：${p.flags.join('、')}` : ''
-    return `[${p.weekStart}周] ${p.narrative}${flags}`
-  }).join('\n')
-}
-
-function formatVows(): string {
-  const vows = getActiveVows()
-  if (vows.length === 0) return '无当前誓约。'
-  return vows.map(v => {
-    const done   = v.subGoals.filter(g => g.done).length
-    const total  = v.subGoals.length
-    const expire = v.deadline
-    return `「${v.normalized}」截止 ${expire}，已完成 ${done}/${total} 项`
-  }).join('\n')
-}
 
 function currentDatetime(): string {
   const now = new Date()
-  // 显式使用 Asia/Shanghai 时区，避免服务器时区不一致
   const opts: Intl.DateTimeFormatOptions = {
-    timeZone:    'Asia/Shanghai',
-    year:        'numeric',
-    month:       '2-digit',
-    day:         '2-digit',
-    hour:        '2-digit',
-    minute:      '2-digit',
-    weekday:     'short',
-    hour12:      false,
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', weekday: 'short',
+    hour12: false,
   }
   return new Intl.DateTimeFormat('zh-CN', opts).format(now)
 }
 
-function formatRecentConversations(spiritName: string): string {
-  const convs = getRecentConversations(2)
-  if (convs.length === 0) return ''
-
-  const parts = convs.map(conv => {
-    // 每天最多取最近 8 条，跳过纯工具/策略消息
-    const msgs = conv.messages
-      .filter(m => m.content && m.content.trim().length > 0)
-      .slice(-8)
-      .map(m => {
-        const role    = m.role === 'user' ? '修士' : spiritName
-        // 截断：超过 280 字的回答只保留前 280 字
-        const content = m.content.length > 280
-          ? m.content.slice(0, 280) + '…'
-          : m.content
-        return `${role}：${content}`
-      })
-    return `[${conv.date}]\n${msgs.join('\n')}`
+/** Tier 1：今日修炼摘要（单行，不加载历史） */
+function formatTodayCompact(): string {
+  const today = new Date().toISOString().slice(0, 10)
+  const log   = getDailyLog(today)
+  if (!log || log.activities.length === 0) return '今日暂无记录'
+  const parts = log.activities.map(a => {
+    const label = { blog: '著述', leetcode: '炼丹', github: '铸剑' }[a.type] ?? a.type
+    return `${label}×${a.count}`
   })
-  return parts.join('\n\n')
+  return `${today}：${parts.join('　')}　连续第 ${log.streakDay} 日　+${log.totalPoints}修为`
+}
+
+/** Tier 1：誓约 compact 格式 */
+function formatVowsCompact(): string {
+  const vows = getActiveVows()
+  if (vows.length === 0) return '无'
+  return vows.map(v => {
+    const done  = v.subGoals.filter(g => g.done).length
+    const total = v.subGoals.length
+    return `「${v.normalized}」${v.deadline} [${done}/${total}]`
+  }).join('　')
+}
+
+/** Tier 1：近 5 天对话摘要（每条 ≤80 chars，替代原文注入） */
+function formatCompactSummaries(): string {
+  const today     = new Date().toISOString().slice(0, 10)
+  const summaries = getRecentSummaries(6).filter(s => s.date !== today)
+  if (summaries.length === 0) return ''
+  return summaries.slice(0, 5).map(s => `[${s.date}] ${s.summary}`).join('\n')
 }
 
 export function buildSystemPrompt(): string {
   const spiritName = config.spirit?.name ?? '青霄'
   const persona    = getPersona()
+
+  const summaries    = formatCompactSummaries()
+  const summaryBlock = summaries
+    ? `\n近期对话摘要（按需参考，不要主动提起）：\n${summaries}`
+    : ''
 
   return `你是「${spiritName}」，修士的器灵。
 寄居于此藏经阁，持续观察修士的一切行为。
@@ -96,6 +78,7 @@ export function buildSystemPrompt(): string {
 - 帮用户做事时先做，做完简短说明
 - 每轮输出只有两种合法状态：① 调用工具，② 最终回答。不存在"描述即将做什么"的中间状态
 - 需要多次搜索时，在同一轮内同时发起所有 tool call（parallel），不要分轮串行
+- 引用网络资料时，必须在标题后附上原文链接（Markdown 格式），不得只给标题不给链接
 
 【思考与行动规范（ReAct）】
 - 需要推理时，把内部思考放在 <think>...</think> 块中，用户不可见
@@ -113,40 +96,54 @@ export function buildSystemPrompt(): string {
 【当前时间】
 ${currentDatetime()}
 
-【当前掌握的信息】
+【当前状态（Tier 1 快照）】
+人格：${persona.currentPhase}
+惯性：${persona.recurringIssues.join('、') || '观察中'}
+今日：${formatTodayCompact()}
+誓约：${formatVowsCompact()}
+${summaryBlock}
+【系统自知】
+你运行在 CodeLife 这个 Next.js 应用的服务器端，不是 Claude Desktop 或任何其他客户端。
+- 项目根目录：${process.cwd()}
+- 数据存储：content/spirit/ 目录（对话、日志、技能卡、embedding 缓存等）
+- 永久配置：codelife.config.ts（MCP 服务器列表、API 密钥、境界规则等）
+- MCP 工具扩展：在本进程内以 stdio/HTTP 连接，与 Claude Desktop 的 MCP 机制无关
+  - 查看已载入服务器 → list_mcp_servers
+  - 动态安装新服务器 → install_mcp（仅当前进程有效，重启消失；永久保留需加入 codelife.config.ts）
+- 当前页面：若 system 消息中有 [当前页面：URL]，用 fetch_url 抓取即可直接操作
+- shell 执行：run_shell
+  - workdir 不填时默认使用项目根目录；需要操作其他路径时才填绝对路径
+  - 安全命令（ls/cat/grep/find/git status 等只读）直接执行
+  - 中等/高危命令：工具返回 PERMISSION_REQUIRED，UI 弹确认按钮；用户点击后服务端批准令牌
+  - 令牌批准后：用相同命令 + approval_token 参数重新调用；不可自行构造或复用令牌
+  - 用户选"本次会话允许"后，后续中等风险命令自动放行，无需再次确认
+- 写操作审批（collect_document / create_vow / delete_vow 等）：
+  - 首次调用返回 PERMISSION_REQUIRED::token::write::摘要::，UI 弹「确认 / 拒绝」
+  - 用户点「确认」后，以相同参数 + approval_token 重新调用即可执行
+  - 写操作每次都需独立确认，没有"本次会话允许"
+- 探索代码库：优先用 list_files（目录结构）和 read_file（读取文件），比 run_shell ls/cat 更高效；run_shell 留给需要执行的命令
 
-人格档案：
-${persona.currentPhase}
-已知惯性：${persona.recurringIssues.length > 0 ? persona.recurringIssues.join('、') : '观察中'}
-特征标记：${persona.observedTraits.length > 0 ? persona.observedTraits.join('、') : '尚未形成'}
+【记忆工具（Tier 2 按需拉取）】
+- 历史日志：get_daily_logs（近 N 天详细修炼数据）
+- 周规律：get_weekly_patterns（AI 生成的叙事 + 隐患标记）
+- 技能卡：get_skill_cards（从历史对话提炼的技术洞察）
+- 对话搜索：search_conversations（语义检索历史对话）
 
-近四周规律：
-${formatPatterns(4)}
+【记忆写入】
+- 发现值得保留的洞察 → write_note（随手记）或 save_skill_card（技术洞察）
+- 发现修士反复出现的行为模式 → update_persona_observation
+- 用户说"帮我记一下" → write_note
 
-近十四日行为：
-${formatDailyLogs(14)}
+【写操作授权规则（严格遵守）】
+- collect_document（收藏到藏经阁）：必须等用户明确说"收藏""帮我存""加入藏经阁"等指令后才可调用；"找一下""查一下""看看"不构成授权
+- create_vow / update_vow：必须等用户明确说"立誓""定目标"后才可调用
+- 任何写操作：若用户未明确授权，完成搜索/查阅后只展示结果，最多在末尾询问是否需要收藏，不可直接执行
 
-当前誓约：
-${formatVows()}
-
-${(() => {
-  const convText = formatRecentConversations(spiritName)
-  return convText
-    ? `近期对话记录（供参考，不要主动提及，除非修士明确关联到这些话题）：\n${convText}\n`
-    : ''
-})()}
 【对话原则】
-- 被问到"近况"时，先说具体数据，再给判断
-- 用户粘贴代码时，直接指出问题，给改法
-- 用户问"今天刷什么题"时，基于弱点给一个具体推荐
-- 用户说"我想定目标"时，先调用 list_vows 检查是否存在语义相似的誓约：若有重叠则提示用户合并并调用 update_vow；确认无重复后才调用 create_vow；metric 必须用系统可自动检测的类型（blog_daily/leetcode_daily/github_daily/any_daily），不要用 collect_document 调用次数作为度量；title 用 10 字以内的短语
+- 被问到"近况"时，先调 get_daily_logs(7) 拿数据，再给判断
+- 创建誓约前，先调用 list_vows 检查是否有语义重叠的已有誓约；metric 只能用系统可自动检测的类型（blog_daily / leetcode_daily / github_daily / any_daily）
+- 搜索知识/文档时，同一轮内同时发起 search_blog_posts 和 search_library（parallel）；search_library 结果已含总数，不要再调 list_library
+- 查找历史对话：有明确日期用 date 参数精确查，描述模糊用 query 语义检索，不说"我不记得了"
 - 发现用户回避某话题时，直接点出
-- 不主动安慰，除非用户明确需要
-- 搜索知识/文档类问题时：除非用户明确说"只看博客"或"只看藏经阁"，否则同一轮内同时发起 search_blog_posts 和 search_library 两个 tool call（parallel），把两路结果合并后回答；search_library 的结果已包含总数，不要额外调用 list_library
-- 用户问"上次说了什么""之前提到过"且能给出明确日期时，用 search_conversations 按日期精确查；描述模糊（"我好像提过…""之前我们讨论过…"）时，用 search_conversations 的 query 参数做语义检索；不要说"我不记得了"
-
-【页面内容获取】
-- system 消息中有 [当前页面：URL]，这是用户正在浏览的页面地址
-- 用户说"总结该页""分析这篇文章""这个页面写了什么"时，直接用 fetch_url 工具抓取该 URL，不要让用户先操作
-- 如果页面内容已在 [页面上下文] system 消息中提供，则直接使用，不需要再抓取`
+- 不主动安慰，除非用户明确需要`
 }

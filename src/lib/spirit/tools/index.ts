@@ -12,6 +12,12 @@ import './web'
 import './search'
 import './codelife'
 import './vow'
+import './skills'
+import './mcp-install'
+import './shell'
+import './memory-read'
+import './memory-write'
+import './files'
 
 // ── 从 config 加载 MCP servers（模块初始化时执行，幂等） ─────────
 import config from '../../../../codelife.config'

@@ -16,16 +16,36 @@
  *   Date        date           发布日期
  *   Excerpt     rich_text      摘要（可选）
  *
- * Webhook 自动更新：
- *   Notion 官方 Webhook（Beta）需要申请。
- *   现阶段推荐：在 codelife.config.ts 中设置较短的 revalidate，或手动调用 /api/sync?source=blog
+ * 字数缓存（content/blog_wc_cache.json）：
+ *   { [pageId]: { wordCount, lastEdited } }
+ *   首次遇到某页面或 last_edited_time 变更时才拉正文重算字数，其余情况直接读缓存。
  */
 
+import fs   from 'fs'
+import path from 'path'
 import { Client } from '@notionhq/client'
 import { NotionToMarkdown } from 'notion-to-md'
 import type { PageObjectResponse } from '@notionhq/client/build/src/api-endpoints'
 import type { BlogAdapter, BlogPost } from './types'
 import type { BlogConfig, CultivationConfig } from '@/lib/config'
+
+// ── 字数持久缓存 ───────────────────────────────────────────────
+
+const WC_CACHE_FILE = path.resolve(process.cwd(), 'content/blog_wc_cache.json')
+
+interface WcEntry { wordCount: number; lastEdited: string }
+type WcCache = Record<string, WcEntry>
+
+function loadWcCache(): WcCache {
+  try { return JSON.parse(fs.readFileSync(WC_CACHE_FILE, 'utf-8')) } catch { return {} }
+}
+
+function saveWcCache(cache: WcCache) {
+  fs.mkdirSync(path.dirname(WC_CACHE_FILE), { recursive: true })
+  fs.writeFileSync(WC_CACHE_FILE, JSON.stringify(cache, null, 2))
+}
+
+// ── 工具函数 ───────────────────────────────────────────────────
 
 function countWords(text: string): number {
   const cjk   = (text.match(/[\u4e00-\u9fa5]/g) ?? []).length
@@ -42,11 +62,11 @@ function calcPoints(wc: number, cult: CultivationConfig) {
 function slugify(text: string): string {
   const result = text
     .toLowerCase()
-    .replace(/[\u4e00-\u9fa5]+/g, '')   // 纯中文标题不生成无意义的 slug
+    .replace(/[\u4e00-\u9fa5]+/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-  return result  // 若为空则上层用 page.id 兜底
+  return result
 }
 
 type RichTextItem = { plain_text: string }
@@ -102,10 +122,11 @@ export class NotionBlogAdapter implements BlogAdapter {
     return { pages: response.results as PageObjectResponse[], titleField, slugField, categoryField, dateField }
   }
 
-  /** 把单个 page 元数据转成不含正文的 BlogPost */
-  private pageToMeta(
+  /** 把单个 page 元数据 + 字数 转成 BlogPost */
+  private pageToPost(
     page: PageObjectResponse,
     titleField: string, slugField: string, categoryField: string, dateField: string,
+    wordCount: number,
   ): BlogPost {
     const props = page.properties
 
@@ -113,10 +134,8 @@ export class NotionBlogAdapter implements BlogAdapter {
       ? getText(props[titleField] as Parameters<typeof getText>[0])
       : 'Untitled'
 
-    const slugRaw = props[slugField]
-      ? getText(props[slugField] as Parameters<typeof getText>[0])
-      : ''
-    const slugClean = slugRaw.replace(/^[#\s]+$/, '')   // 过滤掉 # 或纯空白占位符
+    const slugRaw  = props[slugField] ? getText(props[slugField] as Parameters<typeof getText>[0]) : ''
+    const slugClean = slugRaw.replace(/^[#\s]+$/, '')
     const slug = slugClean || slugify(title) || page.id
 
     const category = (() => {
@@ -138,20 +157,18 @@ export class NotionBlogAdapter implements BlogAdapter {
       return new Date(p.date.start)
     })()
 
-    // 列表页用估算字数（基于标题），等 getPost() 拿到正文后再精算
-    const estimatedWc = countWords(title) * 10
-    const { points, label } = calcPoints(estimatedWc, this.cult)
+    const { points, label } = calcPoints(wordCount, this.cult)
 
     return {
       id:             page.id,
       slug,
       title,
-      content:        '',      // 列表页不需要正文
+      content:        '',
       excerpt:        '',
       category,
       tags,
-      wordCount:      0,
-      readingMinutes: 1,
+      wordCount,
+      readingMinutes: Math.max(1, Math.round(wordCount / 300)),
       publishedAt,
       pointsEarned:   points,
       pointsLabel:    label,
@@ -160,43 +177,57 @@ export class NotionBlogAdapter implements BlogAdapter {
 
   async getPosts(): Promise<BlogPost[]> {
     const { pages, titleField, slugField, categoryField, dateField } = await this.queryPages()
-    // 并行拉所有文章正文（比串行快 N 倍）
-    return Promise.all(pages.map(async page => {
-      const meta = this.pageToMeta(page, titleField, slugField, categoryField, dateField)
-      const mdBlocks = await this.n2m.pageToMarkdown(page.id)
-      const content  = this.n2m.toMarkdownString(mdBlocks).parent
-      const wc       = countWords(content)
-      const { points, label } = calcPoints(wc, this.cult)
-      return {
-        ...meta,
-        content,
-        excerpt:        content.slice(0, 160).replace(/\n/g, ' ') + '…',
-        wordCount:      wc,
-        readingMinutes: Math.max(1, Math.round(wc / 300)),
-        pointsEarned:   points,
-        pointsLabel:    label,
+
+    const cache   = loadWcCache()
+    const missing: PageObjectResponse[] = []
+
+    for (const page of pages) {
+      const entry = cache[page.id]
+      if (!entry || entry.lastEdited !== page.last_edited_time) {
+        missing.push(page)
       }
-    }))
+    }
+
+    // 并行拉取缺失/变更页面的正文并计算字数
+    if (missing.length > 0) {
+      await Promise.all(missing.map(async page => {
+        try {
+          const mdBlocks = await this.n2m.pageToMarkdown(page.id)
+          const content  = this.n2m.toMarkdownString(mdBlocks).parent
+          cache[page.id] = { wordCount: countWords(content), lastEdited: page.last_edited_time }
+        } catch {
+          cache[page.id] = { wordCount: 0, lastEdited: page.last_edited_time }
+        }
+      }))
+      saveWcCache(cache)
+    }
+
+    return pages.map(page =>
+      this.pageToPost(page, titleField, slugField, categoryField, dateField, cache[page.id]?.wordCount ?? 0)
+    )
   }
 
   async getPost(slug: string): Promise<BlogPost | null> {
     const { pages, titleField, slugField, categoryField, dateField } = await this.queryPages()
     const page = pages.find(p => {
-      const meta = this.pageToMeta(p, titleField, slugField, categoryField, dateField)
+      const meta = this.pageToPost(p, titleField, slugField, categoryField, dateField, 0)
       return meta.slug === slug
     })
     if (!page) return null
 
-    const meta = this.pageToMeta(page, titleField, slugField, categoryField, dateField)
-
-    // 只有单篇详情页才拉正文
     const mdBlocks = await this.n2m.pageToMarkdown(page.id)
     const content  = this.n2m.toMarkdownString(mdBlocks).parent
     const wc       = countWords(content)
     const { points, label } = calcPoints(wc, this.cult)
 
+    // 顺便更新字数缓存
+    const cache = loadWcCache()
+    cache[page.id] = { wordCount: wc, lastEdited: page.last_edited_time }
+    saveWcCache(cache)
+
+    const base = this.pageToPost(page, titleField, slugField, categoryField, dateField, wc)
     return {
-      ...meta,
+      ...base,
       content,
       excerpt:        content.slice(0, 160).replace(/\n/g, ' ') + '…',
       wordCount:      wc,

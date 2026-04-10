@@ -28,10 +28,12 @@ export interface ToolResult {
 export type ToolHandler = (args: Record<string, any>) => Promise<ToolResult>
 
 interface RegisteredTool {
-  definition:  ToolDefinition
-  handler:     ToolHandler
-  displayName: string   // UI 进度显示用，如"抓取页面内容"
-  category:    'builtin' | 'mcp' | 'custom'
+  definition:      ToolDefinition
+  handler:         ToolHandler
+  displayName:     string   // UI 进度显示用，如"抓取页面内容"
+  category:        'builtin' | 'mcp' | 'custom'
+  requiresApproval?: boolean
+  approvalSummary?:  (args: Record<string, unknown>) => string
 }
 
 /** MCP 适配器接口 — 任何外部工具服务实现此接口即可接入 */
@@ -82,8 +84,12 @@ export function isToolVisibleToAgent(toolName: string, agentId: string): boolean
 // ── 内置工具注册 ──────────────────────────────────────────────
 
 export interface RegisterOptions {
-  displayName: string
-  category?: RegisteredTool['category']
+  displayName:      string
+  category?:        RegisteredTool['category']
+  /** true = 执行前必须持有用户批准的 approval_token */
+  requiresApproval?: boolean
+  /** 生成给用户看的操作摘要（用于权限确认弹窗） */
+  approvalSummary?:  (args: Record<string, unknown>) => string
 }
 
 export function registerTool(
@@ -94,8 +100,10 @@ export function registerTool(
   toolMap.set(definition.name, {
     definition,
     handler,
-    displayName: opts.displayName,
-    category:    opts.category ?? 'builtin',
+    displayName:      opts.displayName,
+    category:         opts.category ?? 'builtin',
+    requiresApproval: opts.requiresApproval,
+    approvalSummary:  opts.approvalSummary,
   })
 }
 
@@ -147,6 +155,11 @@ export function getToolDisplayName(name: string): string {
   return toolMap.get(name)?.displayName ?? name
 }
 
+/** 获取注册工具的完整记录（供 tools.ts 注入 approval_token 参数用） */
+export function getRegisteredTool(name: string): RegisteredTool | undefined {
+  return toolMap.get(name)
+}
+
 /** 执行工具，返回 ToolResult */
 export async function callTool(
   name: string,
@@ -154,8 +167,30 @@ export async function callTool(
 ): Promise<ToolResult> {
   const tool = toolMap.get(name)
   if (!tool) return { content: `未知工具：${name}` }
+
+  // ── 写操作权限拦截 ──────────────────────────────────────────
+  if (tool.requiresApproval) {
+    const { createWriteToken, consumeWriteToken } = await import('./shell-permissions')
+    const token = args.approval_token as string | undefined
+    if (token) {
+      if (!consumeWriteToken(token, name)) {
+        return { content: '令牌无效、已过期或工具不匹配，请重新发起操作。', brief: '令牌验证失败' }
+      }
+      // 令牌有效，执行 handler（不传 approval_token 给 handler）
+    } else {
+      const summary = tool.approvalSummary?.(args) ?? `执行 ${tool.displayName}`
+      const newToken = createWriteToken(name, summary)
+      return {
+        content: `PERMISSION_REQUIRED::${newToken}::write::${summary}::`,
+        brief:   '等待确认',
+      }
+    }
+  }
+
   try {
-    return await tool.handler(args)
+    // 不把 approval_token 透传给实际 handler
+    const { approval_token: _, ...cleanArgs } = args
+    return await tool.handler(cleanArgs)
   } catch (err) {
     return { content: `工具执行失败：${err instanceof Error ? err.message : String(err)}` }
   }

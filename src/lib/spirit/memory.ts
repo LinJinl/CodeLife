@@ -315,3 +315,79 @@ export function upsertVow(vow: Vow) {
   else vows.push(vow)
   saveVows(vows)
 }
+
+// ── SkillCard ─────────────────────────────────────────────────
+
+/** 从对话中提炼的可复用知识洞察，每周生成一次 */
+export interface SkillCard {
+  id:         string    // skill_YYYYMMDD_NNN
+  title:      string    // 简短标题（≤20字）
+  insight:    string    // 完整知识洞察（2-4句）
+  tags:       string[]
+  sourceDate: string    // 哪天对话提炼的
+  createdAt:  string
+  useCount:   number
+}
+
+const skillsDir        = path.join(BASE, 'skills')
+const skillsIndexFile  = path.join(skillsDir, 'index.json')
+const skillsEmbFile    = path.join(skillsDir, 'embeddings.json')
+
+export function getSkills(): SkillCard[] {
+  return readJSON<SkillCard[]>(skillsIndexFile, [])
+}
+
+export function saveSkills(cards: SkillCard[]) {
+  ensureDir(skillsDir)
+  writeJSON(skillsIndexFile, cards)
+}
+
+export interface SkillEmbeddingEntry {
+  id:  string
+  vec: number[]
+}
+
+export function getSkillEmbeddings(): SkillEmbeddingEntry[] {
+  return readJSON<SkillEmbeddingEntry[]>(skillsEmbFile, [])
+}
+
+export function saveSkillEmbeddings(entries: SkillEmbeddingEntry[]) {
+  ensureDir(skillsDir)
+  writeJSON(skillsEmbFile, entries)
+}
+
+// ── SessionSummary ────────────────────────────────────────────
+
+/** 每次对话结束后异步生成的当日摘要 */
+export interface SessionSummary {
+  date:        string
+  summary:     string    // 1-2句话总结
+  topics:      string[]  // 涉及主题标签
+  generatedAt: string
+}
+
+const summariesDir = path.join(BASE, 'summaries')
+
+export function getSessionSummary(date: string): SessionSummary | null {
+  const file = path.join(summariesDir, `${date}.json`)
+  if (!fs.existsSync(file)) return null
+  return readJSON<SessionSummary>(file, null as unknown as SessionSummary)
+}
+
+export function saveSessionSummary(s: SessionSummary) {
+  ensureDir(summariesDir)
+  writeJSON(path.join(summariesDir, `${s.date}.json`), s)
+}
+
+export function getRecentSummaries(days: number): SessionSummary[] {
+  ensureDir(summariesDir)
+  const result: SessionSummary[] = []
+  for (let i = 0; i < days; i++) {
+    const d = new Date()
+    d.setDate(d.getDate() - i)
+    const date = d.toISOString().slice(0, 10)
+    const s    = getSessionSummary(date)
+    if (s) result.push(s)
+  }
+  return result
+}

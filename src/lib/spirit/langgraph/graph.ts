@@ -14,6 +14,7 @@ import { StateGraph, Send } from '@langchain/langgraph'
 import config               from '../../../../codelife.config'
 import { GraphState }       from './state'
 import type { GraphStateType, SubTask } from './state'
+import { quickClassify }    from './classify'
 import {
   createQingxiaoAgent,
   createSearchAgent,
@@ -26,6 +27,11 @@ import { executorNode }    from './nodes/executor'
 import { synthesizerNode } from './nodes/synthesizer'
 
 // ── 路由函数 ──────────────────────────────────────────────────
+
+/** 图入口：usePlanner=false 时跳过 Planner，直接进 qingxiao */
+function entryRouter(state: GraphStateType): string {
+  return state.usePlanner ? 'planner' : 'qingxiao'
+}
 
 /** Planner 出口：按 strategy 分发 */
 function strategyRouter(state: GraphStateType): string | Send[] {
@@ -56,8 +62,11 @@ function buildFullGraph() {
     .addNode('code_agent',    createCodeAgent())
     .addNode('planner_agent', createPlannerAgent())
 
-  // 主入口
-  graph.addEdge('__start__', 'planner')
+  // 主入口：根据 usePlanner 决定是否走 Planner
+  graph.addConditionalEdges('__start__', entryRouter, {
+    planner:  'planner',
+    qingxiao: 'qingxiao',
+  })
 
   // Planner → 策略分发
   graph.addConditionalEdges('planner', strategyRouter)

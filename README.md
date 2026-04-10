@@ -11,7 +11,9 @@
 - **藏经阁** — 收藏并索引技术文章，支持关键词 + 语义混合检索
 - **功法台** — 技能知识图谱可视化，自动从博客 / 刷题记录推导技能依赖关系
 - **誓约系统** — 设定可验证目标，器灵每日自动核验完成进度
-- **器灵 AI 助手** — 基于 LangGraph 的自适应多 Agent 系统，可联网搜索、分析记录、制定计划；五层记忆持久追踪修炼状态
+- **器灵 AI 助手** — 基于 LangGraph 的自适应多 Agent 系统，可联网搜索、执行 shell 命令、分析记录、制定计划；五层记忆持久追踪修炼状态
+- **shell 执行能力** — 器灵可执行 shell 命令，三级安全分类（安全/中危/高危），中高危命令需通过 UI 权限弹窗确认
+- **写操作权限门控** — 收藏、立誓、删除等写操作需用户在 UI 中明确确认，防止误触
 
 ---
 
@@ -40,7 +42,7 @@ cp .env.local.example .env.local
 | `SPIRIT_BASE_URL` | 自定义 API 端点（DeepSeek/Ollama 等） | 可选 |
 | `SPIRIT_MODEL` | 模型名称（默认 `gpt-4o-mini`） | 可选 |
 | `TAVILY_API_KEY` | 联网搜索 API Key（tavily.com） | 器灵联网搜索时 |
-| `SYNC_SECRET` | `/api/spirit/sync` 接口鉴权密钥 | 生产环境 cron/webhook 调用时 |
+| `SYNC_SECRET` | `/api/sync` 接口鉴权密钥 | 生产环境 cron/webhook 调用时 |
 
 ### 3. 修改配置
 
@@ -87,6 +89,8 @@ blog: {
 | `notion` | 从 Notion Database 拉取 | `NOTION_TOKEN`, `NOTION_DATABASE_ID` |
 | `ghost` | Ghost CMS API | `GHOST_URL`, `GHOST_CONTENT_API_KEY` |
 
+Notion adapter 会将每篇文章的字数缓存到 `content/blog_wc_cache.json`（按 pageId + last_edited_time），避免每次都拉正文。
+
 ### LeetCode 数据
 
 ```typescript
@@ -129,7 +133,6 @@ spirit: {
   enabled:              true,
   name:                 '青霄',           // 器灵名字
   model:                'gpt-4o-mini',   // 支持任何 OpenAI 兼容模型
-  reflectModel:         'gpt-4o-mini',   // 周期记忆生成专用模型（默认同 model）
   maxToolRounds:        6,               // 最大工具调用轮数
   allowDynamicInstall:  false,           // 是否允许通过 /install 动态装载 MCP 包（生产关闭）
 }
@@ -144,37 +147,21 @@ spirit: {
   mcpServers: [
     {
       name:      'Filesystem',
-      namespace: 'fs',           // 工具名前缀，如 fs__read_file
       transport: 'stdio',
       command:   'npx',
       args:      ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
       agents:    ['qingxiao'],   // 哪些 Agent 可见（省略=qingxiao，'*'=全部）
     },
-    {
-      name:      'Memory Server',
-      namespace: 'mem',
-      transport: 'http',
-      url:       'http://localhost:8080/mcp',
-      agents:    ['*'],          // 所有 Agent 均可使用
-    },
   ],
 }
 ```
-
-`agents` 字段控制工具可见范围，防止 MCP 工具过多导致无用上下文膨胀：
-
-| `agents` 值 | 效果 |
-|-------------|------|
-| 省略 / `undefined` | 仅 `qingxiao`（主控）可见 |
-| `['*']` | 所有 Agent 可见 |
-| `['search_agent', 'qingxiao']` | 仅指定 Agent 可见 |
 
 ### 数据同步
 
 器灵记忆系统需要数据同步才能感知修炼状态。触发方式：
 
 - **自动**：每次对话时若当日无 DailyLog，自动执行 `syncToday()`
-- **手动**：`POST /api/spirit/sync`（可配置 cron 或 webhook 触发）
+- **手动**：`GET /api/sync?source=blog|github|leetcode|all`（未设 `SYNC_SECRET` 时无需鉴权）
 
 每周一同步后自动生成 WeeklyPattern，每 7 天自动更新 PersonaProfile。
 
@@ -182,12 +169,7 @@ spirit: {
 
 ## 器灵 AI 使用指南
 
-点击右下角金色光点，呼唤器灵。界面分为两个 Tab：
-
-| Tab | 说明 |
-|-----|------|
-| **问道** | 对话与输入区（默认） |
-| **法器** | 查看所有内置工具与 MCP 服务，可动态装载新法器 |
+点击右下角金色光点，呼唤器灵。
 
 ### 快捷命令
 
@@ -202,39 +184,44 @@ spirit: {
 | `/此页` | 将当前页面内容注入对话上下文 |
 | `/install <包名>` | 动态装载 MCP 包（需 `allowDynamicInstall: true`） |
 
+### 工具执行透明度
+
+每个工具调用在消息下方显示执行步骤，包含：
+- 工具名与入参摘要
+- 执行结果摘要（brief）
+- 搜索/抓取结果的可点击链接
+
+### 思考过程
+
+使用支持思维链的模型（DeepSeek-R1 / QwQ 等）时，器灵的推理过程以可折叠的「推演」块显示。
+
+### 权限确认
+
+器灵执行以下操作时会弹出确认提示：
+
+| 操作类型 | 触发条件 | 选项 |
+|----------|----------|------|
+| **Shell 中危命令** | git commit/push、npm install、文件写入等 | 执行一次 / 本次会话允许 / 拒绝 |
+| **Shell 高危命令** | rm -rf、sudo、kill 等 | 执行一次 / 拒绝 |
+| **写操作** | 收藏文章、创建/删除誓约 | 确认 / 拒绝 |
+
+安全命令（ls、cat、git status 等只读操作）直接执行，无需确认。
+
 ### 多 Agent 模式
 
 器灵内置自适应多 Agent 系统，根据任务自动选择执行策略：
 
 | 策略 | 触发条件 | 执行方式 |
 |------|----------|----------|
-| **直通** | 简单问答、单一操作 | 青霄直接回答 |
-| **调度** | 多步骤、有依赖关系 | 青霄调度 → 专项 Agent 串行执行 |
-| **并行** | 多个独立子任务 | 多个 Agent 同时执行，合并结果 |
-
-策略由 Planner 节点根据任务自动决策，无需手动选择。
+| **直通** | 简单问答、单一操作（强默认） | 青霄直接回答 |
+| **调度** | 后续步骤明确依赖前步具体输出，且需专项 Agent | 青霄调度 → 专项 Agent 串行执行 |
+| **并行** | 2+ 个明确独立子任务，各需不同专项 Agent | 多个 Agent 同时执行，合并结果 |
 
 ---
 
 ## 藏经阁
 
-在 `content/spirit/library/index.json` 维护收藏文章：
-
-```json
-[
-  {
-    "id": "unique-id",
-    "url": "https://example.com/article",
-    "title": "文章标题",
-    "summary": "一句话摘要",
-    "tags": ["标签1", "标签2"],
-    "category": "算法",
-    "savedAt": "2026-01-01"
-  }
-]
-```
-
-也可以通过器灵的 `/藏经` 命令自动收藏（会自动抓取页面内容生成摘要）。
+通过器灵的 `/藏经` 命令自动收藏（会自动抓取页面内容生成摘要），或直接编辑 `content/spirit/library/index.json`。
 
 ---
 
@@ -246,17 +233,22 @@ CodeLife/
 ├── content/
 │   ├── posts/                本地博客文章（Markdown/MDX）
 │   ├── leetcode.yaml         LeetCode 刷题记录（manual 模式）
+│   ├── blog_wc_cache.json    博客字数持久缓存（pageId → wordCount）
 │   └── spirit/               器灵数据
 │       ├── logs/             每日 DailyLog（自动生成）
 │       ├── patterns/         每周 WeeklyPattern（LLM 生成）
+│       ├── summaries/        对话摘要（按日期）
 │       ├── conversations/    对话历史（按日期）
-│       ├── library/          藏经阁收藏
+│       ├── library/          藏经阁收藏（index.json + embeddings）
 │       ├── persona.json      人格档案（LLM 生成）
-│       └── vows.json         誓约记录
+│       ├── vows.json         誓约记录
+│       ├── blog_posts_cache.json   博客元数据缓存（供器灵离线搜索）
+│       └── skill_cards.json  技术洞察卡片
 ├── src/
 │   ├── app/                  Next.js 路由页面
 │   │   ├── api/spirit/       器灵 AI API
 │   │   │   ├── chat/         主对话入口（SSE 流）
+│   │   │   ├── approve/      权限令牌审批（shell/写操作确认）
 │   │   │   ├── mcp/          MCP 工具管理（查询 + 动态装载）
 │   │   │   ├── session/      对话历史读写
 │   │   │   ├── context/      页面上下文注入
@@ -268,22 +260,35 @@ CodeLife/
 │   │   ├── resources/        藏经阁页面
 │   │   └── gongfa/           功法台（技能图谱）
 │   ├── components/
-│   │   ├── SpiritWidget.tsx  器灵对话组件（问道/法器双 Tab）
+│   │   ├── SpiritWidget.tsx  器灵对话组件
 │   │   ├── SkillGraph.tsx    技能依赖关系力导图
 │   │   └── VowSidebar.tsx    当前誓约进度侧边栏
 │   └── lib/
 │       ├── adapters/         数据源适配器（blog/github/leetcode）
 │       ├── cultivation/      修为与境界计算
-│       ├── gongfa/           技能图谱推导（从博客/刷题记录提取节点）
+│       ├── gongfa/           技能图谱推导
 │       └── spirit/           器灵 AI 核心（LangGraph 多 Agent）
 │           ├── langgraph/    图编排（planner/supervisor/executor/synthesizer）
+│           │   └── classify.ts   纯规则快速分类器（绕过 Planner LLM 调用）
 │           ├── tools/        内置工具注册
+│           │   ├── shell.ts      run_shell（三级安全分类）
+│           │   ├── files.ts      list_files / read_file
+│           │   ├── memory-read.ts   get_daily_logs / get_weekly_patterns / get_skill_cards / search_conversations
+│           │   ├── memory-write.ts  write_note / update_persona_observation / save_skill_card
+│           │   ├── skills.ts     search_skills
+│           │   ├── library.ts    collect_document / search_library / list_library
+│           │   ├── vow.ts        list_vows / create_vow / update_vow / delete_vow
+│           │   ├── codelife.ts   read_user_blogs / read_leetcode_records / read_cultivation_stats / search_blog_posts
+│           │   └── search.ts     web_search / fetch_url
+│           ├── shell-permissions.ts  三级权限状态机（令牌生成/消费）
+│           ├── skill-extractor.ts    从对话中提炼技术洞察
+│           ├── summarize.ts          对话摘要生成
 │           ├── memory.ts     五层记忆读写
 │           ├── sync.ts       数据同步 + 记忆生成
 │           ├── prompt.ts     System Prompt 构建
-│           ├── hybrid-search.ts  博客/藏经阁混合检索（关键词 + embedding）
+│           ├── hybrid-search.ts  博客/藏经阁混合检索（BM25 + embedding RRF）
 │           ├── mcp-loader.ts MCP 服务加载
-│           └── registry.ts   工具注册表
+│           └── registry.ts   工具注册表（含写操作权限门控）
 ```
 
 详细架构文档见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
@@ -311,12 +316,12 @@ CodeLife/
 
 | 类别 | 技术 |
 |------|------|
-| 框架 | Next.js 16 (App Router) |
+| 框架 | Next.js 15 (App Router) |
 | 语言 | TypeScript 5 |
-| 样式 | Tailwind CSS 4 |
 | AI 编排 | LangGraph.js |
 | 数据验证 | Zod |
 | 博客内容 | Notion / MDX |
+| 混合检索 | MiniSearch (BM25) + OpenAI Embeddings (RRF 融合) |
 | 数据来源 | GitHub API, LeetCode GraphQL |
 | 部署 | Vercel（推荐） |
 

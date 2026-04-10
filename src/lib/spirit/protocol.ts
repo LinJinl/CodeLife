@@ -14,8 +14,9 @@ export interface LibraryCard {
 
 export type SpiritEvent =
   | { type: 'text';       chunk: string }
-  | { type: 'tool_start'; name: string; display: string }
-  | { type: 'tool_done';  name: string; brief?: string }
+  | { type: 'thinking';   chunk: string }
+  | { type: 'tool_start'; name: string; display: string; desc?: string }
+  | { type: 'tool_done';  name: string; brief?: string; links?: { title: string; url: string }[] }
   | { type: 'cards';      entries: LibraryCard[] }
   | { type: 'error';       message: string }
   | { type: 'done' }
@@ -26,6 +27,8 @@ export type SpiritEvent =
   | { type: 'strategy';    mode: 'direct' | 'sequential' | 'parallel'; taskCount?: number }
   | { type: 'task_start';  taskId: string; agent: string; display: string; desc: string }
   | { type: 'task_done';   taskId: string; agent: string }
+  // ── 权限请求 ───────────────────────────────────────────────
+  | { type: 'permission_request'; token: string; command: string; workdir: string; level: 'moderate' | 'destructive' | 'write' }
 
 /** 序列化成 SSE data 行 */
 export function encodeEvent(event: SpiritEvent): string {

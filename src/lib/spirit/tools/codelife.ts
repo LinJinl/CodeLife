@@ -13,6 +13,7 @@ import {
   getBlogPostsCache, type CachedBlogPost,
 } from '../memory'
 import { hybridSearch, type HybridDoc } from '../hybrid-search'
+import { summarizeChunksForQuery }      from '../summarize'
 
 registerTool({
   name:        'read_user_blogs',
@@ -46,9 +47,10 @@ registerTool({
   }
   const filtered = category ? posts.filter(p => p.category === (category as string)) : posts
   const result   = filtered.slice(0, limit as number)
+  const topTitles = result.slice(0, 3).map(p => p.title).join(' / ')
   return {
     content: JSON.stringify(result),
-    brief:   `共 ${posts.length} 篇，返回 ${result.length} 篇`,
+    brief:   `共 ${posts.length} 篇：${topTitles}`,
   }
 }, { displayName: '读取博客记录' })
 
@@ -151,10 +153,9 @@ registerTool({
   if (category) posts = posts.filter(p => p.category === (category as string))
   if (posts.length === 0) return { content: '博客中没有文章，或分类下无内容', brief: '无结果' }
 
-  // BM25 用全文，embedding 截断到 6000 字避免超 token
   const docs: HybridDoc[] = posts.map(p => ({
     id:   p.slug,
-    text: `${p.title}\n${p.content || p.excerpt}`.slice(0, 6000),
+    text: `${p.title}\n${p.content || p.excerpt}`,
   }))
 
   const cache    = getBlogEmbeddings()
@@ -174,22 +175,21 @@ registerTool({
 
   const postMap = new Map(posts.map(p => [p.slug, p]))
   const matched = results.map(r => {
-    const p       = postMap.get(r.id)!
-    // 从正文中截取与 query 最相关的片段（取前 600 字，足够模型引用）
-    const snippet = (p.content || p.excerpt || '').slice(0, 600)
+    const p = postMap.get(r.id)!
     return {
       title:       p.title,
       slug:        p.slug,
       category:    p.category,
       publishedAt: p.publishedAt.slice(0, 10),
-      snippet,
+      content:     p.content || p.excerpt || '',
       wordCount:   p.wordCount,
     }
   })
 
+  const topTitles = matched.slice(0, 3).map(p => p.title).join(' / ')
   return {
     content: JSON.stringify(matched),
-    brief:   `找到 ${matched.length} 篇相关博文`,
+    brief:   `找到 ${matched.length} 篇：${topTitles}`,
   }
 }, { displayName: '检索博客文章' })
 
@@ -281,16 +281,17 @@ registerTool({
   if (results.length === 0) return { content: `未找到与「${query}」相关的历史对话`, brief: '无匹配' }
 
   const docMap = new Map(docs.map(d => [d.id, d.meta]))
-  const text   = results.map(r => {
-    const m       = docMap.get(r.id)!
-    const role    = m.role === 'user' ? '修士' : '器灵'
-    const snippet = m.content.length > 400 ? m.content.slice(0, 400) + '…' : m.content
-    const tags    = [r.bm25Rank !== null ? 'BM25' : '', r.vecRank !== null ? '向量' : ''].filter(Boolean).join('+')
-    return `[${m.date} ${m.timestamp}] (${tags} RRF=${r.rrfScore.toFixed(3)})\n${role}：${snippet}`
-  }).join('\n\n---\n\n')
+  const chunks = results.map(r => {
+    const m = docMap.get(r.id)!
+    return { date: m.date, role: m.role, content: m.content, timestamp: m.timestamp }
+  })
+
+  // 用 LLM 将检索到的碎片消息压缩为针对 query 的聚焦回答
+  const { buildChatModel } = await import('../langgraph/agents')
+  const summary = await summarizeChunksForQuery(chunks, query as string, buildChatModel())
 
   return {
-    content: text,
-    brief:   `找到 ${results.length} 条（近 ${lookback} 天，混合检索）`,
+    content: summary,
+    brief:   `综合 ${chunks.length} 条历史消息（近 ${lookback} 天）`,
   }
 }, { displayName: '检索对话历史' })

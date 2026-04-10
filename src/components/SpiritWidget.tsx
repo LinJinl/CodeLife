@@ -10,19 +10,30 @@ interface ExecutionStep {
   id:       string
   type:     'task' | 'tool'
   display:  string   // agent 展示名 / 工具展示名
-  desc?:    string   // task: 子任务描述
+  desc?:    string   // task: 子任务描述 / tool: 输入参数摘要
   brief?:   string   // tool: 结果摘要
+  links?:   { title: string; url: string }[]   // web_search / fetch_url 的可点击结果
   done:     boolean
 }
 
+interface PermissionRequest {
+  token:    string
+  command:  string
+  workdir:  string
+  level:    'moderate' | 'destructive' | 'write'
+  resolved: boolean
+}
+
 interface Message {
-  role:       'user' | 'assistant'
-  content:    string
-  timestamp:  string
-  cards?:     LibraryCard[]
-  steps?:     ExecutionStep[]
-  strategy?:  'direct' | 'sequential' | 'parallel'
-  ctxLabels?: string[]   // 发送时附带的页面上下文标签（用于历史记录展示）
+  role:               'user' | 'assistant'
+  content:            string
+  timestamp:          string
+  cards?:             LibraryCard[]
+  steps?:             ExecutionStep[]
+  strategy?:          'direct' | 'sequential' | 'parallel'
+  ctxLabels?:         string[]   // 发送时附带的页面上下文标签（用于历史记录展示）
+  permissionRequest?: PermissionRequest
+  thinking?:          string     // <think> 内容，可折叠显示
 }
 
 const SLASH_COMMANDS = [
@@ -115,16 +126,62 @@ const CATEGORY_COLORS: Record<string, string> = {
 }
 function categoryColor(cat: string) { return CATEGORY_COLORS[cat] ?? 'var(--ink-dim)' }
 
+// ── 思考过程折叠块 ─────────────────────────────────────────────
+
+function ThinkingBlock({ content, streaming }: { content: string; streaming: boolean }) {
+  const [expanded, setExpanded] = useState(false)
+  if (!content && !streaming) return null
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={() => setExpanded(v => !v)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 5,
+          background: 'none', border: 'none', cursor: 'pointer',
+          padding: '2px 0', color: 'var(--ink-dim)',
+        }}
+      >
+        <span style={{
+          fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: 1,
+          color: streaming ? 'var(--gold-dim)' : 'var(--ink-dim)',
+        }}>
+          {streaming ? '推演中' : '推演'}
+        </span>
+        <span style={{
+          fontSize: 8, color: 'var(--ink-trace)',
+          transform: expanded ? 'rotate(90deg)' : 'none',
+          display: 'inline-block', transition: 'transform 0.15s',
+        }}>▶</span>
+      </button>
+      {expanded && content && (
+        <div style={{
+          marginTop: 4, padding: '6px 10px',
+          borderLeft: '2px solid var(--ink-trace)',
+          fontFamily: 'var(--font-serif)', fontSize: 11,
+          color: 'var(--ink-dim)', lineHeight: 1.7,
+          letterSpacing: 0.3, whiteSpace: 'pre-wrap',
+          maxHeight: 240, overflowY: 'auto',
+        }}>
+          {content}
+          {streaming && <span style={{ opacity: 0.4, animation: 'spirit-blink 1s infinite' }}>▌</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── 消息条目（memo 避免输入时重渲染） ────────────────────────
 
 const MessageItem = memo(function MessageItem({
-  msg, isLast, loading, phase,
+  msg, isLast, loading, phase, onPermission,
 }: {
-  msg:     Message
-  isLast:  boolean
-  loading: boolean
-  phase:   'idle' | 'thinking' | 'tooling' | 'replying'
+  msg:           Message
+  isLast:        boolean
+  loading:       boolean
+  phase:         'idle' | 'thinking' | 'tooling' | 'replying'
+  onPermission?: (decision: 'once' | 'session' | 'deny') => void
 }) {
+  const streamingThinking = loading && isLast && phase === 'thinking' && !!msg.thinking
   if (msg.role === 'user') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
@@ -159,19 +216,28 @@ const MessageItem = memo(function MessageItem({
   const hasSteps   = steps.length > 0
   const hasCards   = (msg.cards?.length ?? 0) > 0
   const hideText   = hasCards && !streaming
-  // 所有步骤已完成但内容还未到 → 合并/整合阶段
+  // 并行模式：所有子任务完成，synthesizer 正在整合（"整合中"专用）
   const isSynthesizing = streaming && hasSteps && steps.every(s => s.done) && !msg.content
+    && msg.strategy === 'parallel'
+  // 非并行模式：步骤全完成但文字未到（qingxiao 正在生成回复）
+  const isWaitingReply = streaming && hasSteps && steps.every(s => s.done) && !msg.content
+    && msg.strategy !== 'parallel'
   // 步骤完成后，内容已有时淡化步骤（作为背景记录）
   const stepsDim = hasSteps && !streaming && !!msg.content
 
   return (
     <div style={{ borderLeft: '1px solid var(--ink-trace)', paddingLeft: 12, marginLeft: 2 }}>
 
+      {/* ── 思考过程折叠块 ── */}
+      {(msg.thinking || streamingThinking) && (
+        <ThinkingBlock content={msg.thinking ?? ''} streaming={streamingThinking} />
+      )}
+
       {/* ── 执行步骤区（持久化，随消息保留） ── */}
       {hasSteps && (
         <div style={{
           marginBottom: msg.content ? 10 : 4,
-          opacity: stepsDim ? 0.45 : 1,
+          opacity: stepsDim ? 0.65 : 1,
           transition: 'opacity 0.4s',
         }}>
           {steps.map(step => (
@@ -190,22 +256,48 @@ const MessageItem = memo(function MessageItem({
                   color: step.done ? 'var(--jade)' : 'var(--gold-dim)',
                 }}>
                   {step.display}
-                  {step.brief && (
+                  {/* 完成后显示结果摘要 */}
+                  {step.done && step.brief && (
                     <span style={{ color: 'var(--ink-dim)', marginLeft: 6, fontFamily: 'var(--font-serif)', letterSpacing: 0.3 }}>
                       {step.brief}
                     </span>
                   )}
                 </span>
+                {/* 参数摘要（执行中显示，完成后保留作为上下文） */}
                 {step.desc && (
                   <span style={{
-                    fontFamily: 'var(--font-serif)', fontSize: 10,
-                    color: 'var(--ink-dim)', letterSpacing: 0.3, lineHeight: 1.5,
-                  }}>{step.desc}</span>
+                    fontFamily: 'var(--font-mono)', fontSize: 9,
+                    color: 'var(--ink-dim)',
+                    letterSpacing: 0.3, lineHeight: 1.5,
+                  }}>
+                    {step.desc}
+                  </span>
+                )}
+                {/* 可点击链接（web_search / fetch_url 的结果） */}
+                {step.links && step.links.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
+                    {step.links.map((link, i) => (
+                      <a key={i} href={link.url} target="_blank" rel="noopener noreferrer"
+                        style={{
+                          fontFamily: 'var(--font-serif)', fontSize: 10,
+                          color: 'var(--jade)', letterSpacing: 0.3, lineHeight: 1.5,
+                          textDecoration: 'none',
+                          borderBottom: '1px solid rgba(74,125,94,0.25)',
+                          display: 'block',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          maxWidth: '100%',
+                        }}
+                        title={link.url}
+                      >
+                        ↗ {link.title}
+                      </a>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
           ))}
-          {/* 所有子任务完成，等待 synthesizer */}
+          {/* 并行模式：等待 synthesizer 整合 */}
           {isSynthesizing && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 5,
@@ -223,6 +315,17 @@ const MessageItem = memo(function MessageItem({
               }}>整合中</span>
             </div>
           )}
+          {/* 直接/顺序模式：工具跑完，等待 AI 开始回复 */}
+          {isWaitingReply && (
+            <div style={{ display: 'flex', gap: 5, alignItems: 'center', paddingTop: 6, paddingLeft: 11 }}>
+              {[0, 1, 2].map(i => (
+                <div key={i} style={{
+                  width: 3, height: 3, borderRadius: '50%', background: 'var(--gold-dim)',
+                  animation: `spirit-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
+                }} />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -237,6 +340,67 @@ const MessageItem = memo(function MessageItem({
           ))}
         </div>
       )}
+
+      {/* ── 权限确认区 ── */}
+      {msg.permissionRequest && !msg.permissionRequest.resolved && onPermission && (() => {
+        const pr      = msg.permissionRequest!
+        const isWrite = pr.level === 'write'
+        const isDest  = pr.level === 'destructive'
+        const accentColor = isDest ? 'var(--seal)' : isWrite ? 'var(--jade)' : 'var(--gold-dim)'
+        // write 操作每次都需要单独确认，不提供"本次会话允许"
+        const decisions = isWrite
+          ? (['once', 'deny'] as const)
+          : (['once', 'session', 'deny'] as const)
+        const labelMap: Record<string, string> = {
+          once:    isWrite ? '确认' : '执行一次',
+          session: '本次会话允许',
+          deny:    '拒绝',
+        }
+        const headerText = isDest ? '⚠ 高危操作' : isWrite ? '写操作确认' : '需要确认'
+
+        return (
+          <div style={{
+            margin: '8px 0', padding: '10px 14px',
+            border: `1px solid ${accentColor}`,
+            borderRadius: 2, background: 'var(--deep)',
+          }}>
+            <div style={{
+              fontFamily: 'var(--font-mono)', fontSize: 10,
+              color: accentColor, letterSpacing: 1, marginBottom: 6,
+            }}>
+              {headerText}
+            </div>
+            <div style={{
+              fontFamily: 'var(--font-serif)', fontSize: 12,
+              color: 'var(--ink)', lineHeight: 1.6,
+              marginBottom: 10,
+            }}>
+              {pr.command}
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {decisions.map(d => (
+                <button
+                  key={d}
+                  onClick={() => onPermission(d)}
+                  style={{
+                    fontFamily: 'var(--font-serif)', fontSize: 10, letterSpacing: 1,
+                    padding: '3px 10px', border: '1px solid',
+                    borderColor: d === 'deny' ? 'var(--ink-trace)'
+                      : d === 'session' ? 'var(--jade)'
+                      : accentColor,
+                    color: d === 'deny' ? 'var(--ink-dim)'
+                      : d === 'session' ? 'var(--jade)'
+                      : accentColor,
+                    background: 'transparent', cursor: 'pointer', borderRadius: 1,
+                  }}
+                >
+                  {labelMap[d]}
+                </button>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── 消息正文 ── */}
       {!hideText && (
@@ -366,6 +530,37 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
       updated[updated.length - 1] = updater(updated[updated.length - 1])
       return updated
     })
+  }, [])
+
+  // 权限弹窗按钮回调：调用 approve API，成功后触发新轮次
+  const handlePermission = useCallback((msgIdx: number, decision: 'once' | 'session' | 'deny', token: string) => {
+    // 立即标记 resolved，隐藏按钮
+    setMessages(prev => {
+      if (!prev[msgIdx]) return prev
+      const updated = [...prev]
+      updated[msgIdx] = {
+        ...updated[msgIdx],
+        permissionRequest: { ...updated[msgIdx].permissionRequest!, resolved: true },
+      }
+      return updated
+    })
+    if (decision === 'deny') {
+      send('取消，不要执行该命令')
+      return
+    }
+    // 通知服务端批准令牌，再触发新轮次
+    fetch('/api/spirit/approve', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ token, decision }),
+    })
+      .then(r => r.json())
+      .then((data: { ok?: boolean }) => {
+        if (data.ok) send('已确认，请继续执行')
+        else         send('确认请求失败，请重试')
+      })
+      .catch(() => send('确认请求失败，请重试'))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function resolveContent(raw: string): string {
@@ -539,6 +734,11 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
 
           switch (ev.type) {
 
+            // ── 思考流（<think> 内容）───────────────────────
+            case 'thinking':
+              updateLastMsg(msg => ({ ...msg, thinking: (msg.thinking ?? '') + ev.chunk }))
+              break
+
             // ── 文本流 ──────────────────────────────────────
             case 'text':
               setPhase('replying')
@@ -592,7 +792,9 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                 updateLastMsg(msg => ({
                   ...msg,
                   steps: [...(msg.steps ?? []), {
-                    id: sid, type: 'tool', display: ev.display, done: false,
+                    id: sid, type: 'tool', display: ev.display,
+                    desc: ev.desc,   // 工具参数摘要（执行中可见）
+                    done: false,
                   }],
                 }))
               }
@@ -605,7 +807,7 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                   updateLastMsg(msg => ({
                     ...msg,
                     steps: (msg.steps ?? []).map(s =>
-                      s.id === sid ? { ...s, done: true, brief: ev.brief } : s
+                      s.id === sid ? { ...s, done: true, brief: ev.brief, links: ev.links } : s
                     ),
                   }))
                 }
@@ -617,6 +819,20 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
               setPhase('tooling')
               break
             case 'agent_end':
+              break
+
+            // ── 权限请求 ────────────────────────────────────
+            case 'permission_request':
+              updateLastMsg(msg => ({
+                ...msg,
+                permissionRequest: {
+                  token:    ev.token,
+                  command:  ev.command,
+                  workdir:  ev.workdir,
+                  level:    ev.level,
+                  resolved: false,
+                },
+              }))
               break
 
             case 'error': throw new Error(ev.message)
@@ -949,6 +1165,9 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                   isLast={i === messages.length - 1}
                   loading={loading}
                   phase={phase}
+                  onPermission={msg.role === 'assistant' && msg.permissionRequest && !msg.permissionRequest.resolved
+                    ? (d) => handlePermission(i, d, msg.permissionRequest!.token)
+                    : undefined}
                 />
               </div>
             ))}

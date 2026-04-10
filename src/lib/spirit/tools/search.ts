@@ -64,8 +64,9 @@ registerTool({
     ? `摘要：${data.answer}\n\n来源：\n${formatted}`
     : formatted
 
+  const topTitles = results.slice(0, 3).map(r => r.title).join(' / ')
   return {
     content,
-    brief: `找到 ${results.length} 条结果`,
+    brief: `找到 ${results.length} 条：${topTitles}`,
   }
 }, { displayName: '联网搜索' })

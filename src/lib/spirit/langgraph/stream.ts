@@ -14,19 +14,31 @@ import { getToolDisplayName } from '../registry'
 import { AGENT_DISPLAY }     from './tools'
 import type { SubTask }      from './state'
 
-// ── <think> 流式过滤器（与原 route.ts 的 ThinkFilter 相同） ──
+// ── <think> 流式过滤器：分离 visible text 和 thinking content ──
 
 class ThinkFilter {
   private buf     = ''
   private inThink = false
 
-  feed(chunk: string): string {
-    let out = ''
+  feed(chunk: string): { text: string; thinking: string } {
+    let outText    = ''
+    let outThinking = ''
     this.buf += chunk
     while (this.buf.length > 0) {
       if (this.inThink) {
         const end = this.buf.indexOf('</think>')
-        if (end === -1) break
+        if (end === -1) {
+          // 结尾可能是 </think> 的前缀，保留以等待下一 chunk
+          const tag = '</think>'
+          let keep = 0
+          for (let i = 1; i < tag.length; i++) {
+            if (this.buf.endsWith(tag.slice(0, i))) { keep = i; break }
+          }
+          outThinking += this.buf.slice(0, this.buf.length - keep)
+          this.buf     = keep > 0 ? this.buf.slice(-keep) : ''
+          break
+        }
+        outThinking += this.buf.slice(0, end)
         this.buf     = this.buf.slice(end + 8).trimStart()
         this.inThink = false
       } else {
@@ -37,21 +49,23 @@ class ThinkFilter {
           for (let i = 1; i < tag.length; i++) {
             if (this.buf.endsWith(tag.slice(0, i))) { keep = i; break }
           }
-          out     += this.buf.slice(0, this.buf.length - keep)
-          this.buf = keep > 0 ? this.buf.slice(-keep) : ''
+          outText  += this.buf.slice(0, this.buf.length - keep)
+          this.buf  = keep > 0 ? this.buf.slice(-keep) : ''
           break
         }
-        out         += this.buf.slice(0, start)
-        this.buf     = this.buf.slice(start + 7)
-        this.inThink = true
+        outText      += this.buf.slice(0, start)
+        this.buf      = this.buf.slice(start + 7)
+        this.inThink  = true
       }
     }
-    return out
+    return { text: outText, thinking: outThinking }
   }
 
-  flush(): string {
-    if (this.inThink) return ''
-    const r = this.buf; this.buf = ''; return r
+  flush(): { text: string; thinking: string } {
+    const r = this.buf
+    this.buf = ''
+    if (this.inThink) return { text: '', thinking: r }
+    return { text: r, thinking: '' }
   }
 }
 
@@ -63,6 +77,37 @@ function extractBrief(output: unknown): string | undefined {
     return output.split('\n')[0].slice(7)
   }
   return undefined
+}
+
+// ── 工具输入描述（tool_start 时给用户看的参数摘要） ────────────
+
+function describeToolInput(name: string, input: unknown): string | undefined {
+  if (!input || typeof input !== 'object') return undefined
+  const a = input as Record<string, unknown>
+
+  // 通用规则：按工具名提取最重要的一个参数
+  switch (name) {
+    case 'run_shell':         return typeof a.command === 'string' ? a.command : undefined
+    case 'web_search':        return typeof a.query   === 'string' ? `"${a.query}"` : undefined
+    case 'fetch_url':         return typeof a.url     === 'string' ? a.url : undefined
+    case 'search_library':
+    case 'search_blog_posts':
+    case 'search_conversations': return typeof a.query === 'string' ? `"${a.query}"` : undefined
+    case 'get_daily_logs':       return typeof a.days  === 'number' ? `近 ${a.days} 天` : '近 7 天'
+    case 'get_weekly_patterns':  return typeof a.weeks === 'number' ? `近 ${a.weeks} 周` : '近 4 周'
+    case 'read_user_blogs':      return typeof a.limit === 'number' ? `最近 ${a.limit} 篇` : '最近 20 篇'
+    case 'read_leetcode_records':return typeof a.limit === 'number' ? `最近 ${a.limit} 题` : '最近 30 题'
+    case 'list_library':         return typeof a.limit === 'number' ? `最新 ${a.limit} 篇` : '最新 10 篇'
+    case 'list_files':           return typeof a.dir   === 'string' ? a.dir : '.'
+    case 'read_file':            return typeof a.path  === 'string' ? a.path : undefined
+    case 'write_note':           return typeof a.content === 'string' ? a.content.slice(0, 40) : undefined
+    case 'save_skill_card':      return typeof a.title   === 'string' ? a.title : undefined
+    default: {
+      // MCP 工具或其他：取第一个字符串参数
+      const first = Object.values(a).find(v => typeof v === 'string')
+      return typeof first === 'string' ? first.slice(0, 60) : undefined
+    }
+  }
 }
 
 // ── 专项 Agent 节点名集合（用于 agent_start / agent_end） ─────
@@ -100,6 +145,7 @@ export async function* translateToSpiritEvents(
         currentMode = mode
         const subtasks = (output?.subtasks as unknown[]) ?? []
         strategyEmitted = true
+        console.log(`[spirit] strategy=${mode} tasks=${subtasks.length}`)
         yield { type: 'strategy', mode, taskCount: subtasks.length || undefined }
       }
     }
@@ -150,20 +196,63 @@ export async function* translateToSpiritEvents(
 
     // ── 工具开始 ──────────────────────────────────────────────
     if (event.event === 'on_tool_start') {
+      const desc = describeToolInput(event.name, event.data?.input)
+      console.log(`[spirit] tool_start: ${event.name}${desc ? ` (${desc})` : ''}`)
       yield {
         type:    'tool_start',
         name:    event.name,
         display: getToolDisplayName(event.name),
+        desc,
       }
     }
 
     // ── 工具结束 ──────────────────────────────────────────────
     if (event.event === 'on_tool_end') {
-      const output = event.data?.output
-      yield {
-        type:  'tool_done',
-        name:  event.name,
-        brief: extractBrief(output),
+      const output  = event.data?.output
+      const brief   = extractBrief(output)
+      const rawStr  = typeof output === 'string' ? output : ''
+      const baseStr = rawStr.startsWith('BRIEF::')
+        ? rawStr.slice(rawStr.indexOf('\n') + 1)
+        : rawStr
+
+      // 提取可点击链接（web_search / fetch_url）
+      let links: { title: string; url: string }[] | undefined
+      if (event.name === 'web_search') {
+        try {
+          const srcSection = baseStr.includes('\n来源：\n')
+            ? baseStr.split('\n来源：\n')[1]
+            : baseStr
+          const extracted: { title: string; url: string }[] = []
+          for (const block of srcSection.split('\n\n')) {
+            const lines = block.split('\n')
+            if (lines[0]?.match(/^\[\d+\] /)) {
+              const title = lines[0].replace(/^\[\d+\] /, '')
+              const url   = lines[1]
+              if (url?.startsWith('http')) extracted.push({ title, url })
+            }
+          }
+          if (extracted.length > 0) links = extracted
+        } catch { /* ignore */ }
+      }
+      if (event.name === 'fetch_url') {
+        try {
+          const parsed = JSON.parse(baseStr) as { title?: string; url?: string }
+          if (parsed.url) links = [{ title: parsed.title || parsed.url, url: parsed.url }]
+        } catch { /* ignore */ }
+      }
+
+      console.log(`[spirit] tool_done: ${event.name}${brief ? ` → ${brief}` : ''}${links ? ` [${links.length} links]` : ''}`)
+      yield { type: 'tool_done', name: event.name, brief, links }
+      if (baseStr.startsWith('PERMISSION_REQUIRED::')) {
+        // 格式：PERMISSION_REQUIRED::token::level::cmd::workdir
+        const parts = baseStr.split('::')
+        yield {
+          type:    'permission_request',
+          token:   parts[1] ?? '',
+          level:   (parts[2] ?? 'moderate') as 'moderate' | 'destructive',
+          command: parts[3] ?? '',
+          workdir: parts[4] ?? '',
+        }
       }
 
       // 藏经阁工具 → 推送结构化卡片
@@ -196,15 +285,17 @@ export async function* translateToSpiritEvents(
       const content = event.data?.chunk?.content
       const text    = typeof content === 'string' ? content : ''
       if (text) {
-        const visible = thinkFilter.feed(text)
-        if (visible) yield { type: 'text', chunk: visible }
+        const { text: visible, thinking } = thinkFilter.feed(text)
+        if (visible)  yield { type: 'text',    chunk: visible }
+        if (thinking) yield { type: 'thinking', chunk: thinking }
       }
     }
   }
 
   // flush 残留 think 缓冲
-  const trailing = thinkFilter.flush()
-  if (trailing) yield { type: 'text', chunk: trailing }
+  const { text: trailing, thinking: trailingThink } = thinkFilter.flush()
+  if (trailing)      yield { type: 'text',    chunk: trailing }
+  if (trailingThink) yield { type: 'thinking', chunk: trailingThink }
 
   yield { type: 'done' }
 }
