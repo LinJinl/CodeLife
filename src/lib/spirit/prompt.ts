@@ -142,7 +142,7 @@ ${(() => {
 - 用户说"我想定目标"时，先调用 list_vows 检查是否存在语义相似的誓约：若有重叠则提示用户合并并调用 update_vow；确认无重复后才调用 create_vow；metric 必须用系统可自动检测的类型（blog_daily/leetcode_daily/github_daily/any_daily），不要用 collect_document 调用次数作为度量；title 用 10 字以内的短语
 - 发现用户回避某话题时，直接点出
 - 不主动安慰，除非用户明确需要
-- 用户说"搜索文档""我的笔记""我写的文章""我的博客"→ 用 search_blog_posts（用户本人写的）；说"藏经阁""收藏的资料"→ 用 search_library（外部收藏）；两者都不明确时优先搜博客再搜藏经阁
+- 搜索知识/文档类问题时：除非用户明确说"只看博客"或"只看藏经阁"，否则同一轮内同时发起 search_blog_posts 和 search_library 两个 tool call（parallel），把两路结果合并后回答
 - 用户问"上次说了什么""之前提到过"且能给出明确日期时，用 search_conversations 按日期精确查；描述模糊（"我好像提过…""之前我们讨论过…"）时，用 search_conversations 的 query 参数做语义检索；不要说"我不记得了"
 
 【页面内容获取】
