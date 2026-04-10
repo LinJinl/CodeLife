@@ -2,23 +2,23 @@
  * LeetCode CN 非官方 Adapter
  *
  * 设置步骤：
- *   1. 在 .env.local 添加：
- *        LEETCODE_CN_USERNAME=你的用户名
- *        LEETCODE_CN_PASSWORD=你的密码
- *   2. 在 codelife.config.ts 设置 leetcode.provider = 'cn'，并填写 cn 配置
+ *   1. 浏览器登录 leetcode.cn，打开 DevTools（F12）
+ *      → Application → Cookies → https://leetcode.cn
+ *      复制 LEETCODE_SESSION 和 csrftoken 两个值
+ *   2. 在 .env.local 添加：
+ *        LEETCODE_CN_USERNAME=你的用户名（URL中可见）
+ *        LEETCODE_CN_COOKIE=LEETCODE_SESSION=xxx; csrftoken=yyy
+ *   3. 在 codelife.config.ts 设置 leetcode.provider = 'cn'
  *
- * 工作原理：
- *   - 首次运行时自动用账号密码登录，Session Cookie 缓存到
- *     content/leetcode_cn_session.txt（已在 .gitignore 中忽略）
- *   - Cookie 过期（HTTP 403/401）时自动重新登录
- *   - 题目难度缓存到 content/leetcode_difficulty_cache.json，
- *     每个 titleSlug 只查一次，后续直接读文件
+ * Cookie 过期说明：
+ *   - LEETCODE_SESSION 通常有效期数周，过期后重新从浏览器复制即可
+ *   - 过期时 GraphQL 请求会返回 401/403，日志中会有提示
  *
  * 数据说明：
- *   - 最多拉取最近 100 道 AC 题目（LeetCode API 限制）
- *   - category / note 字段无法从 API 获取，保留空字符串
- *   - 如有更早的记录，可同时保留 content/leetcode.yaml 用 manual 模式补充
- *     （未来可支持合并，当前只走 CN API）
+ *   - getStats()：总 AC 数按难度分类（Easy/Medium/Hard）
+ *   - getProblems()：最近 100 道 AC 题目，去重保留最新一次
+ *   - 题目难度缓存到 content/leetcode_difficulty_cache.json（每个 slug 只查一次）
+ *   - category / note 无法从 API 获取，保留空字符串
  */
 
 import fs   from 'fs'
@@ -26,43 +26,8 @@ import path from 'path'
 import type { LeetcodeAdapter, LeetcodeProblem, LeetcodeStats, Difficulty } from './types'
 import type { LeetcodeConfig, CultivationConfig } from '@/lib/config'
 
-const LC_CN_BASE = 'https://leetcode.cn'
-const LC_CN_GQL  = 'https://leetcode.cn/graphql/'
-
-const COOKIE_FILE = path.resolve(process.cwd(), 'content/leetcode_cn_session.txt')
-const DIFF_CACHE  = path.resolve(process.cwd(), 'content/leetcode_difficulty_cache.json')
-const MASTERED_THRESHOLD = 10
-
-// ── Cookie 存储 ────────────────────────────────────────────────────
-
-interface CookieStore {
-  csrftoken:        string
-  LEETCODE_SESSION: string
-}
-
-function loadCookieStore(): CookieStore | null {
-  try { return JSON.parse(fs.readFileSync(COOKIE_FILE, 'utf-8')) as CookieStore } catch { return null }
-}
-
-function saveCookieStore(store: CookieStore) {
-  fs.mkdirSync(path.dirname(COOKIE_FILE), { recursive: true })
-  fs.writeFileSync(COOKIE_FILE, JSON.stringify(store))
-}
-
-/** 解析 Response 里所有 Set-Cookie 头，返回 { name: value } */
-function parseSCHeaders(res: Response): Record<string, string> {
-  const result: Record<string, string> = {}
-  // Node 18+: getSetCookie() 返回 string[]，避免逗号歧义
-  const headers = res.headers as typeof res.headers & { getSetCookie?: () => string[] }
-  const raw = headers.getSetCookie?.() ?? [res.headers.get('set-cookie') ?? '']
-  for (const h of raw) {
-    const [kv] = h.split(';')
-    const idx  = kv.indexOf('=')
-    if (idx < 0) continue
-    result[kv.slice(0, idx).trim()] = kv.slice(idx + 1).trim()
-  }
-  return result
-}
+const LC_CN_GQL = 'https://leetcode.cn/graphql/'
+const DIFF_CACHE = path.resolve(process.cwd(), 'content/leetcode_difficulty_cache.json')
 
 // ── 难度缓存 ───────────────────────────────────────────────────────
 
@@ -75,6 +40,12 @@ function loadDiffCache(): DiffCache {
 function saveDiffCache(cache: DiffCache) {
   fs.mkdirSync(path.dirname(DIFF_CACHE), { recursive: true })
   fs.writeFileSync(DIFF_CACHE, JSON.stringify(cache, null, 2))
+}
+
+/** 从 "KEY=val; KEY2=val2" 格式中提取指定 key 的值 */
+function extractCookie(cookieStr: string, key: string): string {
+  const m = cookieStr.match(new RegExp(`(?:^|;\\s*)${key}=([^;]+)`))
+  return m?.[1]?.trim() ?? ''
 }
 
 // ── GraphQL 查询 ───────────────────────────────────────────────────
@@ -112,98 +83,47 @@ const QUESTION_QUERY = `
 // ── Adapter ────────────────────────────────────────────────────────
 
 export class LeetcodeCNAdapter implements LeetcodeAdapter {
-  private username:    string
-  private password:    string
-  private cult:        CultivationConfig
-  private store:       CookieStore | null = null
+  private username: string
+  private cookie:   string   // "LEETCODE_SESSION=xxx; csrftoken=yyy"
+  private cult:     CultivationConfig
 
   constructor(config: LeetcodeConfig, cult: CultivationConfig) {
     if (!config.cn) throw new Error(
-      '[LC CN] 请在 codelife.config.ts 配置 leetcode.cn，并在 .env.local 设置 LEETCODE_CN_USERNAME / LEETCODE_CN_PASSWORD'
+      '[LC CN] 请在 codelife.config.ts 配置 leetcode.cn，并在 .env.local 设置 LEETCODE_CN_USERNAME / LEETCODE_CN_COOKIE'
+    )
+    if (!config.cn.cookie) throw new Error(
+      '[LC CN] LEETCODE_CN_COOKIE 未设置。\n' +
+      '请浏览器登录 leetcode.cn → F12 → Application → Cookies → 复制 LEETCODE_SESSION 和 csrftoken\n' +
+      '格式：LEETCODE_SESSION=xxx; csrftoken=yyy'
     )
     this.username = config.cn.username
-    this.password = config.cn.password
+    this.cookie   = config.cn.cookie
     this.cult     = cult
   }
 
-  // ── 登录 ──────────────────────────────────────────────────────────
+  // ── GraphQL 请求 ──────────────────────────────────────────────────
 
-  private async login(): Promise<CookieStore> {
-    // Step 1: 拿初始 csrftoken
-    const initRes = await fetch(`${LC_CN_BASE}/`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CodeLife/1.0)' },
-    })
-    const initCookies = parseSCHeaders(initRes)
-    const csrftoken   = initCookies['csrftoken'] ?? ''
-
-    // Step 2: 提交账号密码
-    const loginRes = await fetch(`${LC_CN_BASE}/accounts/login/`, {
-      method:   'POST',
-      redirect: 'manual',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Cookie':        `csrftoken=${csrftoken}`,
-        'Referer':       `${LC_CN_BASE}/accounts/login/`,
-        'X-CSRFToken':   csrftoken,
-      },
-      body: new URLSearchParams({
-        login:               this.username,
-        password:            this.password,
-        csrfmiddlewaretoken: csrftoken,
-      }).toString(),
-    })
-
-    const loginCookies = parseSCHeaders(loginRes)
-    const session      = loginCookies['LEETCODE_SESSION']
-    const newCsrf      = loginCookies['csrftoken'] ?? csrftoken
-
-    if (!session) {
-      throw new Error('[LC CN] 登录失败：未收到 LEETCODE_SESSION，请检查账号密码')
-    }
-
-    const store = { csrftoken: newCsrf, LEETCODE_SESSION: session }
-    saveCookieStore(store)
-    return store
-  }
-
-  private async ensureStore(): Promise<CookieStore> {
-    if (this.store) return this.store
-    const cached = loadCookieStore()
-    if (cached) { this.store = cached; return cached }
-    this.store = await this.login()
-    return this.store
-  }
-
-  // ── GraphQL 请求（含自动重登） ─────────────────────────────────────
-
-  private async gql<T>(
-    query: string,
-    variables: Record<string, unknown>,
-    isRetry = false,
-  ): Promise<T> {
-    const store     = await this.ensureStore()
-    const cookieStr = `csrftoken=${store.csrftoken}; LEETCODE_SESSION=${store.LEETCODE_SESSION}`
+  private async gql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+    const csrftoken = extractCookie(this.cookie, 'csrftoken')
 
     const res = await fetch(LC_CN_GQL, {
       method:  'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Cookie':        cookieStr,
-        'X-CSRFToken':   store.csrftoken,
+        'Cookie':        this.cookie,
+        'X-CSRFToken':   csrftoken,
         'Referer':       'https://leetcode.cn/',
+        'User-Agent':    'Mozilla/5.0 (compatible; CodeLife/1.0)',
       },
       body: JSON.stringify({ query, variables }),
     })
 
-    // Cookie 过期 → 清缓存，重新登录，只重试一次
-    if ((res.status === 401 || res.status === 403) && !isRetry) {
-      this.store = null
-      fs.rmSync(COOKIE_FILE, { force: true })
-      this.store = await this.login()
-      return this.gql<T>(query, variables, true)
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        '[LC CN] Cookie 已过期，请重新从浏览器复制 LEETCODE_SESSION 和 csrftoken 到 .env.local 的 LEETCODE_CN_COOKIE'
+      )
     }
-
-    if (!res.ok) throw new Error(`[LC CN] HTTP ${res.status}: ${await res.text().catch(() => '')}`)
+    if (!res.ok) throw new Error(`[LC CN] HTTP ${res.status}`)
 
     const json = await res.json() as { data: T; errors?: unknown[] }
     if (json.errors?.length) throw new Error(`[LC CN] GraphQL: ${JSON.stringify(json.errors)}`)
@@ -261,7 +181,7 @@ export class LeetcodeCNAdapter implements LeetcodeAdapter {
         easy   * this.cult.leetcode.easy +
         medium * this.cult.leetcode.medium +
         hard   * this.cult.leetcode.hard,
-      categories: [],  // CN API 无分类统计，显示功法台需配合 manual YAML
+      categories: [],
     }
   }
 
@@ -277,26 +197,21 @@ export class LeetcodeCNAdapter implements LeetcodeAdapter {
     }>(RECENT_AC_QUERY, { username: this.username, limit: 100 })
 
     const submissions = data.recentAcSubmissionList ?? []
-    const slugs       = submissions.map(s => s.titleSlug)
-    const diffCache   = await this.resolveDifficulties(slugs)
+    const diffCache   = await this.resolveDifficulties(submissions.map(s => s.titleSlug))
 
     const pointsMap: Record<Difficulty, number> = {
-      easy:   this.cult.leetcode.easy,
-      medium: this.cult.leetcode.medium,
-      hard:   this.cult.leetcode.hard,
+      easy: this.cult.leetcode.easy, medium: this.cult.leetcode.medium, hard: this.cult.leetcode.hard,
     }
     const labelMap: Record<Difficulty, string> = {
       easy: '初锻', medium: '淬炼', hard: '神铸',
     }
 
-    // 同一题只取最近一次 AC（去重）
-    const seen     = new Set<string>()
+    const seen = new Set<string>()
     const problems: LeetcodeProblem[] = []
 
     for (const s of submissions) {
       if (seen.has(s.titleSlug)) continue
       seen.add(s.titleSlug)
-
       const diff = diffCache[s.titleSlug] ?? 'medium'
       problems.push({
         id:           Number(s.id),

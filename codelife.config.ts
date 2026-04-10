@@ -91,13 +91,16 @@ export default defineConfig({
     username: 'YOUR_LEETCODE_USERNAME', // ← 改成你的 LeetCode 用户名（显示用）
     provider: 'cn',                     // 'cn' | 'manual' | 'unofficial'
 
-    // ── CN（力扣中文版，账号密码自动登录）──────────────────────
-    // .env.local 添加：
-    //   LEETCODE_CN_USERNAME=你的用户名
-    //   LEETCODE_CN_PASSWORD=你的密码
+    // ── CN（力扣中文版，Cookie 认证）───────────────────────────
+    // 1. 浏览器登录 leetcode.cn
+    // 2. F12 → Application → Cookies → https://leetcode.cn
+    // 3. 复制 LEETCODE_SESSION 和 csrftoken 两个值
+    // 4. .env.local 添加：
+    //      LEETCODE_CN_USERNAME=你的用户名（力扣主页 URL 里的那个）
+    //      LEETCODE_CN_COOKIE=LEETCODE_SESSION=xxx; csrftoken=yyy
     cn: {
       username: process.env.LEETCODE_CN_USERNAME!,
-      password: process.env.LEETCODE_CN_PASSWORD!,
+      cookie:   process.env.LEETCODE_CN_COOKIE,
     },
 
     // ── manual（历史记录手动补充）────────────────────────────────

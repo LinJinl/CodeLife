@@ -49,10 +49,14 @@ export interface LeetcodeConfig {
     dataFile: string
   }
   cn?: {
-    /** leetcode.cn 登录用户名 */
+    /** leetcode.cn 用户名（用于 GraphQL 查询） */
     username: string
-    /** leetcode.cn 登录密码（存 .env.local，勿硬编码） */
-    password: string
+    /**
+     * 从浏览器 DevTools 复制的 Cookie 字符串（推荐）。
+     * 格式：LEETCODE_SESSION=xxx; csrftoken=yyy
+     * 浏览器登录后：F12 → Application → Cookies → leetcode.cn → 复制这两个值
+     */
+    cookie?: string
   }
   revalidate?: number
 }
