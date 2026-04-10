@@ -1,4 +1,4 @@
-# 《道途·学海》—— 修仙风格个人学习网站 · 设计文档 v1.0
+# 《道途·学海》—— 修仙风格个人学习网站 · 设计文档 v2.0
 
 ---
 
@@ -77,23 +77,30 @@
 
 ### 3.2 色彩系统
 
-```
-主色调（深空黑）   #0A0B0F  ← 背景底色，极深的蓝黑
-次级背景           #0F1118  ← 卡片/面板背景
-表面层             #161922  ← 内容区域背景
+> **实现说明**：最终采用水墨暖金调，而非原始方案的赛博青调。整体氛围更贴近古卷水墨，减少科技感，增强仙境沉浸感。支持亮/暗双色系（CSS 媒体查询自动切换）。
 
-灵气青（主题色）   #00E5FF  ← 修为、进度、高亮
-仙光金（点缀色）   #FFD700  ← 境界标题、成就
-渡劫紫（特殊色）   #8B5CF6  ← 稀有成就、最高境界
-丹炉红（警示色）   #FF4444  ← 危险、失败、警告
-生机绿（成功色）   #00FF88  ← 完成、成功、通关
+实际 CSS 变量（`globals.css`）：
 
-文字主色           #E8E8F0  ← 主要文字
-文字次色           #8890A0  ← 辅助说明文字
-文字暗色           #4A5060  ← 禁用/占位文字
+```css
+/* 暗色系（默认） */
+--void:        #0A080F   /* 背景底色，极深墨黑 */
+--cave:        #120F0C   /* 次级背景 */
+--deep:        #1A1612   /* 卡片背景 */
+--surface:     #222018   /* 表面层 */
 
-边框色             rgba(0, 229, 255, 0.15)  ← 灵气边框
-光晕色             rgba(0, 229, 255, 0.05)  ← 背景微光
+--gold:        #D4A843   /* 仙光金（主题色）：修为、高亮、器灵 */
+--gold-bright: #E8BE5A   /* 高亮态金 */
+--gold-dim:    #9A7535   /* 暗金，用于次要元素 */
+--gold-line:   rgba(212,168,67,0.25)  /* 边框 */
+--gold-wash:   rgba(212,168,67,0.07)  /* 背景微光 */
+
+--ink:         #D4C8B0   /* 文字主色（米白） */
+--ink-mid:     #A09080   /* 文字次色 */
+--ink-dim:     #6E6050   /* 辅助/禁用 */
+--ink-trace:   #3A3028   /* 分隔线、极淡边框 */
+
+--seal:        #A03830   /* 朱砂红：警告、丹炉 */
+--jade:        #4A7D5E   /* 翠绿：成功、生机 */
 ```
 
 ### 3.3 字体系统
@@ -108,10 +115,10 @@
 
 ### 3.4 核心视觉元素
 
-**粒子系统**：页面背景漂浮着若隐若现的灵气粒子（细小光点），缓慢游动
-**扫光效果**：境界提升时，从屏幕底部涌起金色光浪
-**水墨晕染**：卡片hover时，边缘出现水墨扩散效果
-**符文线条**：装饰性的抽象汉字笔画，半透明叠加在背景
+**粒子系统**（已实现）：`WorldBackground.tsx` 用原生 Canvas API 实现，三处固定源点向上漂浮灵气粒子，无第三方库依赖
+**器灵光点**：右下角常驻金色脉动光点，呼唤器灵入口
+**扫光效果**：境界提升时，从屏幕底部涌起金色光浪（规划中）
+**水墨晕染**：卡片 hover 时边缘有淡金色光晕
 **进度灵脉**：进度条用流光效果代替普通填充，像活的灵脉
 
 ---
@@ -120,42 +127,30 @@
 
 ```
 道途
-├── 仙府（Dashboard）        ← 主页，总览修炼状态
-├── 修炼日志（Blog）         ← 博客系统
+├── 仙府（Dashboard）  /           ← 主页，总览修炼状态          ✅ 已实现
+├── 修炼日志（Blog）   /blog        ← 博客系统                    ✅ 已实现
 │   ├── 日志列表
 │   └── 日志详情
-├── 炼丹炉（LeetCode）       ← 刷题记录追踪
-│   ├── 题目记录
-│   ├── 分类统计
-│   └── 心得笔记
-├── 铸剑台（GitHub）         ← GitHub 活动展示
-│   ├── 提交热力图
-│   └── 项目展示
-├── 藏经阁（Resources）      ← 书单/收藏/外链
-├── 修炼历程（Timeline）     ← 时间线，所有行为记录
-└── 仙途志（About）          ← 关于我
+├── 炼丹炉（LeetCode） /leetcode    ← 刷题记录追踪                ✅ 已实现
+├── 铸剑台（GitHub）   /github      ← GitHub 活动展示             ✅ 已实现
+├── 藏经阁（Resources）/resources   ← 收藏文章，AI 辅助检索        ✅ 已实现
+├── 功法台（Gongfa）   /gongfa      ← 技能树可视化（力导图）        ✅ 已实现
+├── 修炼历程（Timeline）            ← 时间线，所有行为记录          🔲 规划中
+└── 仙途志（About）                 ← 关于我                       🔲 规划中
 ```
 
-### 全局导航设计
+### 全局导航设计（实际实现）
 
-**左侧竖排导航栏**（宽度 220px，可收起至 60px）：
+**顶部横向导航栏**（`Navigation.tsx`）：
 
 ```
-┌─────────────────┐
-│   ☯  道途       │  ← Logo区域
-├─────────────────┤
-│ 🏯 仙府         │  ← 高亮当前页
-│ 📜 修炼日志     │
-│ ⚗️  炼丹炉      │
-│ ⚔️  铸剑台      │
-│ 📚 藏经阁       │
-│ ⏳ 修炼历程     │
-├─────────────────┤
-│ 境界：金丹期    │  ← 当前境界
-│ ████░░░░ 67%   │  ← 修为进度
-│ 当前修为: 3,456 │
-└─────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  道途     仙府  修炼日志  炼丹炉  铸剑台  藏经阁  功法台  │  ← 导航链接
+│           滚动后背景变为半透明毛玻璃                       │
+└──────────────────────────────────────────────────────────┘
 ```
+
+右下角常驻金色光点（`SpiritWidget`），点击呼唤器灵，打开侧边栏面板。
 
 ---
 
@@ -379,65 +374,81 @@
 
 ---
 
-## 八、技术选型建议
+## 八、技术选型（实际采用）
 
-| 模块 | 推荐技术 |
-|------|------|
-| 前端框架 | **Next.js 14**（App Router）|
-| 样式方案 | **Tailwind CSS** + CSS Variables |
-| 动效库 | **Framer Motion** |
-| 粒子效果 | **tsParticles** |
-| 博客渲染 | **MDX**（Markdown + JSX）|
-| 代码高亮 | **Shiki**（主题：tokyo-night）|
-| 数据库 | **Supabase**（PostgreSQL）|
-| GitHub数据 | **GitHub GraphQL API** |
-| LeetCode数据 | 手动录入 / 爬虫辅助 |
-| 部署 | **Vercel** |
-| 认证 | **NextAuth.js**（个人站可直接写死管理员）|
-
----
-
-## 九、数据模型（核心表结构）
-
-```
-用户修为记录 (cultivation_logs)
-  id, type(blog/leetcode/github),
-  title, points, created_at, metadata(JSON)
-
-博文 (posts)
-  id, title, content(MDX), category,
-  words, points_earned, published_at
-
-题目记录 (leetcode_records)
-  id, problem_id, title, difficulty,
-  language, solution(code), note, solved_at
-
-境界历史 (realm_history)
-  id, from_realm, to_realm, total_points, achieved_at
-
-成就 (achievements)
-  id, key, title, description, earned_at
-```
+| 模块 | 技术 | 说明 |
+|------|------|------|
+| 前端框架 | **Next.js 16**（App Router） | ISR 增量静态生成 |
+| 语言 | **TypeScript 5** | 全栈类型安全 |
+| 样式方案 | **Tailwind CSS 4** + CSS Variables | 原子样式 + CSS 自定义属性 |
+| 动效 | 原生 CSS animation + Canvas API | 无第三方动效库 |
+| 粒子效果 | 原生 **Canvas API**（`WorldBackground.tsx`） | 无 tsParticles 依赖 |
+| AI 编排 | **LangGraph.js** + **LangChain** | 多 Agent 图编排 |
+| AI 模型 | 任意 **OpenAI 兼容 API** | DeepSeek / Ollama 均可 |
+| MCP 扩展 | **@modelcontextprotocol/sdk** | 工具动态扩展 |
+| 博客渲染 | **next-mdx-remote** + **Notion API** | 双源支持 |
+| 数据存储 | **本地 JSON 文件**（`content/spirit/`） | 无数据库依赖 |
+| GitHub 数据 | **@octokit/graphql** | GraphQL 查询贡献图 |
+| LeetCode 数据 | 本地 YAML / 非官方 GraphQL | 手动或自动同步 |
+| 技能图 | **react-force-graph-2d** | 力导向图可视化 |
+| 部署 | **Vercel**（推荐） | 零配置部署 |
 
 ---
 
-## 十、首个版本（MVP）优先级
+## 九、数据存储（文件系统）
 
-**Phase 1（核心体验）**：
-1. 仙府 Dashboard（修为显示、境界进度）
-2. 修炼日志（博客，支持 MDX）
-3. 全局修为计算系统
-4. 境界提升动画
+> **设计变更**：不使用数据库，改为本地 JSON/YAML 文件存储，部署无依赖，适合个人站。
 
-**Phase 2（内容扩展）**：
-5. 炼丹炉（LeetCode 记录）
-6. 铸剑台（GitHub 数据对接）
-7. 成就系统
+```
+content/
+├── posts/                    本地博客文章（.md / .mdx）
+├── leetcode.yaml             LeetCode 刷题记录（手动维护）
+└── spirit/                   器灵 AI 数据
+    ├── logs/{date}.json      每日 DailyLog（syncToday 自动写入）
+    │   { date, activities[], totalPoints, streakDay }
+    ├── patterns/{week}.json  每周 WeeklyPattern（LLM 生成）
+    │   { weekStart, narrative, stats{}, flags[] }
+    ├── persona.json          人格档案（LLM 每 7 天更新）
+    │   { observedTraits[], recurringIssues[], currentPhase, milestones[], lastUpdated }
+    ├── vows.json             誓约记录（用户创建/完成）
+    │   [{ id, title, subGoals[], status, deadline }]
+    ├── conversations/{date}.json  对话历史（前端 POST 保存）
+    │   { date, messages[{ role, content }] }
+    └── library/index.json    藏经阁收藏
+        [{ id, url, title, summary, tags[], category, savedAt }]
+```
 
-**Phase 3（体验完善）**：
-8. 修炼历程时间线
-9. 藏经阁
-10. 移动端适配
+博客数据由 `BlogAdapter` 接口统一抽象，支持 Notion / Ghost / 本地 MDX 三种来源。LeetCode 数据同理，支持手动 YAML 和非官方 GraphQL 两种来源。
+
+---
+
+## 十、功能完成进度
+
+**Phase 1 — 核心体验** ✅ 已完成：
+- ✅ 仙府 Dashboard（修为显示、境界进度、近期动态）
+- ✅ 修炼日志（Notion / Ghost / 本地 MDX 三源博客）
+- ✅ 全局修为计算系统（`calcPoints` + `calcRealm`，配置驱动）
+- ✅ 粒子背景（Canvas 自绘）
+
+**Phase 2 — 内容扩展** ✅ 已完成：
+- ✅ 炼丹炉（LeetCode 分类统计、recent 列表）
+- ✅ 铸剑台（GitHub GraphQL 贡献图、仓库列表）
+- ✅ 藏经阁（AI 辅助收藏 + 全文检索）
+- ✅ 功法台（技能依赖关系力导图，react-force-graph-2d）
+
+**Phase 3 — 器灵 AI** ✅ 已完成：
+- ✅ LangGraph 多 Agent 系统（Planner / Sequential / Parallel）
+- ✅ 五层记忆系统（DailyLog / WeeklyPattern / PersonaProfile / Vow / Conversation）
+- ✅ MCP 工具扩展（静态配置 + 动态装载，namespace 权限隔离）
+- ✅ 器灵界面（问道 / 法器双 Tab，SSE 实时流）
+- ✅ 誓约系统（创建/追踪/自动核验）
+
+**Phase 4 — 待实现** 🔲：
+- 🔲 修炼历程时间线
+- 🔲 境界提升动画（金光冲天）
+- 🔲 成就系统（仙缘解锁）
+- 🔲 仙途志（About 页）
+- 🔲 移动端适配
 
 ---
 
@@ -453,4 +464,42 @@
 
 ---
 
-*设计文档 v1.0 · 2026-04-07*
+---
+
+## 十一、器灵 AI 设计（新增）
+
+器灵是修士的专属 AI 伴侣，常驻于右下角金色光点，打开后以侧边面板形式展示。
+
+### 界面：问道 / 法器 双 Tab
+
+| Tab | 内容 |
+|-----|------|
+| **问道** | 对话界面，SSE 实时流，展示工具调用进度、多 Agent 并行状态 |
+| **法器** | 内置工具列表（分组展示）+ MCP 服务清单 + 动态装载入口 |
+
+### 多 Agent 执行策略
+
+```
+用户输入 → Planner 分析
+    ├─ Direct     简单问答，青霄直接回答
+    ├─ Sequential 多步骤，Supervisor 调度专项 Agent 串行执行
+    └─ Parallel   多子任务，N 个 Executor 并发，Synthesizer 汇总
+```
+
+专项 Agent：`search_agent`（联网）、`code_agent`（算法）、`planner_agent`（学习规划）
+
+### 记忆系统
+
+五层记忆，全部存于 `content/spirit/`，每次对话实时注入 System Prompt：
+
+| 层级 | 更新时机 |
+|------|----------|
+| DailyLog | 每次对话自动 sync |
+| WeeklyPattern | 每周一 LLM 生成 |
+| PersonaProfile | 每 7 天 LLM 更新 |
+| Vow | 用户对话创建/更新 |
+| Conversation | 每次对话结束前端保存 |
+
+---
+
+*设计文档 v2.0 · 2026-04-08（v1.0 初稿 2026-04-07）*

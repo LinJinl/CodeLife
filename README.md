@@ -38,6 +38,7 @@ cp .env.local.example .env.local
 | `SPIRIT_BASE_URL` | 自定义 API 端点（DeepSeek/Ollama 等） | 可选 |
 | `SPIRIT_MODEL` | 模型名称（默认 `gpt-4o-mini`） | 可选 |
 | `TAVILY_API_KEY` | 联网搜索 API Key（tavily.com） | 器灵联网搜索时 |
+| `SYNC_SECRET` | `/api/spirit/sync` 接口鉴权密钥 | 生产环境 cron/webhook 调用时 |
 
 ### 3. 修改配置
 

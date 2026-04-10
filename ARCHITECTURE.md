@@ -19,7 +19,8 @@
 │  ┌─────────────────────────────────────────────────┐    │
 │  │               API Routes                         │    │
 │  │  /api/spirit/chat   /api/spirit/context          │    │
-│  │  /api/spirit/session  /api/spirit/tools          │    │
+│  │  /api/spirit/session  /api/spirit/mcp            │    │
+│  │  /api/spirit/vows   /api/spirit/sync             │    │
 │  │  /api/sync  /api/webhooks/{github,notion}        │    │
 │  └─────────────────────────────────────────────────┘    │
 │                                                          │
@@ -316,6 +317,8 @@ POST /api/spirit/sync（可由 cron / webhook 触发）
 | `/api/spirit/session` | GET / POST | 读取 / 保存当日对话记录 |
 | `/api/spirit/mcp` | GET | 返回已加载 MCP 服务器 + 全部工具（含内置）|
 | `/api/spirit/mcp` | POST | 动态装载 MCP 包（需 `allowDynamicInstall: true`）|
+| `/api/spirit/tools` | GET | 兼容接口，返回工具列表 + MCP 适配器（同 mcp GET） |
+| `/api/spirit/vows` | GET / POST / PATCH / DELETE | 誓约 CRUD（列表 / 创建 / 更新 / 删除） |
 | `/api/spirit/sync` | POST | 触发数据同步 + 周期记忆生成（WeeklyPattern / PersonaProfile）|
 | `/api/sync` | POST | 全量数据同步（触发所有适配器） |
 | `/api/webhooks/github` | POST | GitHub Push 事件 → 触发 commit 同步 |
