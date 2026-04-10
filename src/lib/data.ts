@@ -32,37 +32,37 @@ const BLOG_TTL     = 3600
 
 // ── 带 tag 的缓存包装 ──────────────────────────────────────────
 const cachedBlogPosts = unstable_cache(
-  () => blog.getPosts(),
+  () => blog.getPosts().catch(() => []),
   ['blog-posts', config.blog.provider],
   { tags: ['blog'], revalidate: BLOG_TTL },
 )
 
 const cachedGithubStats = unstable_cache(
-  () => github?.getStats() ?? Promise.resolve(null),
+  () => (github?.getStats() ?? Promise.resolve(null)).catch(() => null),
   ['github-stats'],
   { tags: ['github'], revalidate: GITHUB_TTL },
 )
 
 const cachedGithubRepos = unstable_cache(
-  () => github?.getRepos() ?? Promise.resolve([]),
+  () => (github?.getRepos() ?? Promise.resolve([])).catch(() => []),
   ['github-repos'],
   { tags: ['github'], revalidate: GITHUB_TTL },
 )
 
 const cachedGithubCommits = unstable_cache(
-  () => github?.getRecentCommits(30) ?? Promise.resolve([]),
+  () => (github?.getRecentCommits(30) ?? Promise.resolve([])).catch(() => []),
   ['github-commits'],
   { tags: ['github'], revalidate: GITHUB_TTL },
 )
 
 const cachedLeetcodeStats = unstable_cache(
-  () => leetcode?.getStats() ?? Promise.resolve(null),
+  () => (leetcode?.getStats() ?? Promise.resolve(null)).catch(() => null),
   ['leetcode-stats'],
   { tags: ['leetcode'], revalidate: LEETCODE_TTL },
 )
 
 const cachedLeetcodeProblems = unstable_cache(
-  () => leetcode?.getProblems() ?? Promise.resolve([]),
+  () => (leetcode?.getProblems() ?? Promise.resolve([])).catch(() => []),
   ['leetcode-problems'],
   { tags: ['leetcode'], revalidate: LEETCODE_TTL },
 )

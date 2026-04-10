@@ -22,6 +22,7 @@ import {
   getBlogEmbeddings, saveBlogEmbeddings,
   getConvEmbeddings, saveConvEmbeddings,
   getRecentConversations,
+  getBlogPostsCache, saveBlogPostsCache, type CachedBlogPost,
 } from './memory'
 
 function todayStr(): string {
@@ -52,6 +53,21 @@ export async function syncToday(): Promise<DailyLog> {
   try {
     const blog  = createBlogAdapter(config.blog, config.cultivation)
     const posts = await blog.getPosts()
+
+    // 全量 metadata 缓存到本地，供器灵搜索时离线使用
+    const cached: CachedBlogPost[] = posts.map(p => ({
+      slug:        p.slug,
+      title:       p.title,
+      excerpt:     p.excerpt ?? '',
+      content:     '',
+      category:    p.category,
+      tags:        p.tags ?? [],
+      wordCount:   p.wordCount,
+      publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
+      pointsEarned: p.pointsEarned,
+    }))
+    saveBlogPostsCache(cached)
+
     const todayPosts = posts.filter(p => {
       const d = typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString()
       return d.startsWith(date)
@@ -265,22 +281,66 @@ export async function preIndexEmbeddings(llm: SimpleLLM): Promise<{ blogNew: num
   let blogNew = 0
   let convNew = 0
 
-  // ── 博客预索引 ────────────────────────────────────────────
+  // ── 博客预索引（含全文）──────────────────────────────────
   try {
-    const adapter  = createBlogAdapter(config.blog, config.cultivation)
-    const posts    = await adapter.getPosts()
-    const cache    = getBlogEmbeddings()
-    const cacheMap = new Map(cache.map(e => [e.id, e.vec]))
-    const missing  = posts.filter(p => !cacheMap.has(p.slug))
+    const adapter    = createBlogAdapter(config.blog, config.cultivation)
+    const posts      = await adapter.getPosts()
+    const embCache   = getBlogEmbeddings()
+    const embMap     = new Map(embCache.map(e => [e.id, e.vec]))
+    const postCache  = getBlogPostsCache()
+    const postMap    = new Map(postCache.map(p => [p.slug, p]))
 
-    if (missing.length > 0) {
-      const texts = missing.map(p =>
-        [p.title, p.excerpt, p.category, p.tags?.join(' ')].filter(Boolean).join(' ')
-      )
+    // 找出还没有全文的文章
+    const needContent = posts.filter(p => !postMap.get(p.slug)?.content)
+
+    // 逐篇拉全文（并发 3 篇，避免 API 过载）
+    for (let i = 0; i < needContent.length; i += 3) {
+      const batch = needContent.slice(i, i + 3)
+      await Promise.all(batch.map(async p => {
+        try {
+          const full    = await adapter.getPost(p.slug)
+          const content = full?.content
+            ? full.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+            : p.excerpt ?? ''
+          postMap.set(p.slug, {
+            slug: p.slug, title: p.title, excerpt: p.excerpt ?? '',
+            content,
+            category: p.category, tags: p.tags ?? [],
+            wordCount: p.wordCount,
+            publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
+            pointsEarned: p.pointsEarned,
+          })
+        } catch {
+          // 单篇拉失败不中断整体
+        }
+      }))
+    }
+
+    // 补充还没进 postMap 的文章（元数据）
+    for (const p of posts) {
+      if (!postMap.has(p.slug)) {
+        postMap.set(p.slug, {
+          slug: p.slug, title: p.title, excerpt: p.excerpt ?? '', content: p.excerpt ?? '',
+          category: p.category, tags: p.tags ?? [], wordCount: p.wordCount,
+          publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
+          pointsEarned: p.pointsEarned,
+        })
+      }
+    }
+    saveBlogPostsCache(Array.from(postMap.values()))
+
+    // embedding：用 title + content（截断到 6000 字避免超 token）
+    const missingEmb = posts.filter(p => !embMap.has(p.slug))
+    if (missingEmb.length > 0) {
+      const texts = missingEmb.map(p => {
+        const cached = postMap.get(p.slug)
+        const body   = cached?.content ?? cached?.excerpt ?? ''
+        return `${p.title}\n${body}`.slice(0, 6000)
+      })
       const vecs = await embedder.embedDocuments(texts)
-      missing.forEach((p, i) => cacheMap.set(p.slug, vecs[i]))
-      saveBlogEmbeddings(Array.from(cacheMap.entries()).map(([id, vec]) => ({ id, vec })))
-      blogNew = missing.length
+      missingEmb.forEach((p, i) => embMap.set(p.slug, vecs[i]))
+      saveBlogEmbeddings(Array.from(embMap.entries()).map(([id, vec]) => ({ id, vec })))
+      blogNew = missingEmb.length
     }
   } catch (e) {
     console.warn('[preIndex] 博客索引失败:', e)

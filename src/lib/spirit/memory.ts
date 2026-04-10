@@ -249,6 +249,31 @@ export function saveConvEmbeddings(entries: ConvEmbeddingEntry[]) {
   writeJSON(convEmbeddingsFile, entries)
 }
 
+// ── Blog Posts Cache（同步时写入，搜索时读取，避免实时调 API）────
+
+const blogPostsCacheFile = path.join(BASE, 'blog_posts_cache.json')
+
+/** 缓存的博客文章（含正文，供器灵全文搜索） */
+export interface CachedBlogPost {
+  slug:        string
+  title:       string
+  excerpt:     string
+  content:     string   // 正文（纯文本，去除 HTML/MDX 标签）
+  category:    string
+  tags:        string[]
+  wordCount:   number
+  publishedAt: string   // ISO string
+  pointsEarned: number
+}
+
+export function getBlogPostsCache(): CachedBlogPost[] {
+  return readJSON<CachedBlogPost[]>(blogPostsCacheFile, [])
+}
+
+export function saveBlogPostsCache(posts: CachedBlogPost[]) {
+  writeJSON(blogPostsCacheFile, posts)
+}
+
 // ── Blog Embedding Cache ──────────────────────────────────────
 
 const blogEmbeddingsFile = path.join(BASE, 'blog_embeddings.json')

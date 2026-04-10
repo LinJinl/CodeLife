@@ -10,6 +10,7 @@ import {
   getConversation, getRecentConversations,
   getConvEmbeddings, saveConvEmbeddings,
   getBlogEmbeddings, saveBlogEmbeddings,
+  getBlogPostsCache, type CachedBlogPost,
 } from '../memory'
 import { hybridSearch, type HybridDoc } from '../hybrid-search'
 
@@ -25,19 +26,26 @@ registerTool({
     required: [],
   },
 }, async ({ limit = 20, category }) => {
-  const adapter = createBlogAdapter(config.blog, config.cultivation)
-  const posts   = await adapter.getPosts()
-  const filtered = category
-    ? posts.filter(p => p.category === (category as string))
-    : posts
-  const result = filtered.slice(0, limit as number).map(p => ({
-    title:       p.title,
-    category:    p.category,
-    tags:        p.tags,
-    wordCount:   p.wordCount,
-    publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
-    pointsEarned: p.pointsEarned,
-  }))
+  let posts: CachedBlogPost[] = getBlogPostsCache()
+  if (posts.length === 0) {
+    try {
+      const adapter   = createBlogAdapter(config.blog, config.cultivation)
+      const livePosts = await adapter.getPosts()
+      posts = livePosts.map(p => ({
+        slug: p.slug, title: p.title, excerpt: p.excerpt ?? '', content: '',
+        category: p.category, tags: p.tags ?? [], wordCount: p.wordCount,
+        publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
+        pointsEarned: p.pointsEarned,
+      }))
+      const { saveBlogPostsCache: save } = await import('../memory')
+      save(posts)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { content: `博客数据源读取失败：${msg}`, brief: '数据源错误' }
+    }
+  }
+  const filtered = category ? posts.filter(p => p.category === (category as string)) : posts
+  const result   = filtered.slice(0, limit as number)
   return {
     content: JSON.stringify(result),
     brief:   `共 ${posts.length} 篇，返回 ${result.length} 篇`,
@@ -57,8 +65,14 @@ registerTool({
   },
 }, async ({ difficulty, limit = 30 }) => {
   if (!config.leetcode.enabled) return { content: 'LeetCode 未启用', brief: '未启用' }
-  const adapter  = createLeetcodeAdapter(config.leetcode, config.cultivation)
-  const problems = await adapter.getProblems()
+  let problems
+  try {
+    const adapter = createLeetcodeAdapter(config.leetcode, config.cultivation)
+    problems = await adapter.getProblems()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { content: `LeetCode 数据源读取失败：${msg}`, brief: '数据源错误' }
+  }
   const filtered = difficulty
     ? problems.filter(p => p.difficulty === (difficulty as string))
     : problems
@@ -107,14 +121,40 @@ registerTool({
     required: ['query'],
   },
 }, async ({ query, category, topK = 5 }) => {
-  const adapter = createBlogAdapter(config.blog, config.cultivation)
-  let   posts   = await adapter.getPosts()
-  if (category) posts = posts.filter(p => p.category === (category as string))
-  if (posts.length === 0) return { content: '没有找到相关博文', brief: '无结果' }
+  // 优先读本地缓存（syncToday 写入），避免每次搜索都调远程 API
+  let posts: CachedBlogPost[] = getBlogPostsCache()
 
+  if (posts.length === 0) {
+    // 缓存不存在时 fallback：实时拉一次并写缓存
+    try {
+      const adapter    = createBlogAdapter(config.blog, config.cultivation)
+      const livePosts  = await adapter.getPosts()
+      posts = livePosts.map(p => ({
+        slug:        p.slug,
+        title:       p.title,
+        excerpt:     p.excerpt ?? '',
+        content:     '',
+        category:    p.category,
+        tags:        p.tags ?? [],
+        wordCount:   p.wordCount,
+        publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
+        pointsEarned: p.pointsEarned,
+      }))
+      const { saveBlogPostsCache } = await import('../memory')
+      saveBlogPostsCache(posts)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { content: `博客数据源读取失败（本地无缓存）：${msg}，请先执行一次数据同步（POST /api/spirit/sync）`, brief: '数据源错误' }
+    }
+  }
+
+  if (category) posts = posts.filter(p => p.category === (category as string))
+  if (posts.length === 0) return { content: '博客中没有文章，或分类下无内容', brief: '无结果' }
+
+  // BM25 用全文，embedding 截断到 6000 字避免超 token
   const docs: HybridDoc[] = posts.map(p => ({
     id:   p.slug,
-    text: [p.title, p.excerpt, p.category, p.tags?.join(' ')].filter(Boolean).join(' '),
+    text: `${p.title}\n${p.content || p.excerpt}`.slice(0, 6000),
   }))
 
   const cache    = getBlogEmbeddings()
@@ -134,13 +174,15 @@ registerTool({
 
   const postMap = new Map(posts.map(p => [p.slug, p]))
   const matched = results.map(r => {
-    const p = postMap.get(r.id)!
+    const p       = postMap.get(r.id)!
+    // 从正文中截取与 query 最相关的片段（取前 600 字，足够模型引用）
+    const snippet = (p.content || p.excerpt || '').slice(0, 600)
     return {
       title:       p.title,
       slug:        p.slug,
       category:    p.category,
-      publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString().slice(0, 10),
-      excerpt:     p.excerpt?.slice(0, 120),
+      publishedAt: p.publishedAt.slice(0, 10),
+      snippet,
       wordCount:   p.wordCount,
     }
   })

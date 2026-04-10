@@ -55,7 +55,7 @@ function buildZodSchema(
 export const TOOL_SETS: Record<string, string[] | '*'> = {
   search_agent:  ['web_search', 'fetch_url'],
   code_agent:    ['read_leetcode_records', 'read_user_blogs', 'search_blog_posts', 'search_library', 'list_library'],
-  planner_agent: ['read_cultivation_stats', 'read_user_blogs', 'search_blog_posts', 'read_leetcode_records', 'search_library', 'search_conversations'],
+  planner_agent: ['read_cultivation_stats', 'read_leetcode_records', 'search_conversations'],
   qingxiao:      '*',
 }
 

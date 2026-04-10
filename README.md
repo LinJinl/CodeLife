@@ -8,8 +8,10 @@
 
 - **修为体系** — 每篇博文、每道算法题、每次 commit 都产生修为，驱动境界升级
 - **多数据源集成** — 博客（Notion / Ghost / 本地 MDX）、GitHub、LeetCode 三端同步
-- **藏经阁** — 收藏并索引技术文章，支持标签检索
-- **器灵 AI 助手** — 基于 LangGraph 的自适应多 Agent 系统，可联网搜索、分析记录、制定计划
+- **藏经阁** — 收藏并索引技术文章，支持关键词 + 语义混合检索
+- **功法台** — 技能知识图谱可视化，自动从博客 / 刷题记录推导技能依赖关系
+- **誓约系统** — 设定可验证目标，器灵每日自动核验完成进度
+- **器灵 AI 助手** — 基于 LangGraph 的自适应多 Agent 系统，可联网搜索、分析记录、制定计划；五层记忆持久追踪修炼状态
 
 ---
 
@@ -258,22 +260,28 @@ CodeLife/
 │   │   │   ├── mcp/          MCP 工具管理（查询 + 动态装载）
 │   │   │   ├── session/      对话历史读写
 │   │   │   ├── context/      页面上下文注入
+│   │   │   ├── vows/         誓约 CRUD
 │   │   │   └── sync/         数据同步 + 周期记忆生成
 │   │   ├── blog/             博客页面
 │   │   ├── github/           GitHub 统计页面
 │   │   ├── leetcode/         LeetCode 记录页面
-│   │   └── resources/        藏经阁页面
+│   │   ├── resources/        藏经阁页面
+│   │   └── gongfa/           功法台（技能图谱）
 │   ├── components/
-│   │   └── SpiritWidget.tsx  器灵对话组件（问道/法器双 Tab）
+│   │   ├── SpiritWidget.tsx  器灵对话组件（问道/法器双 Tab）
+│   │   ├── SkillGraph.tsx    技能依赖关系力导图
+│   │   └── VowSidebar.tsx    当前誓约进度侧边栏
 │   └── lib/
 │       ├── adapters/         数据源适配器（blog/github/leetcode）
 │       ├── cultivation/      修为与境界计算
+│       ├── gongfa/           技能图谱推导（从博客/刷题记录提取节点）
 │       └── spirit/           器灵 AI 核心（LangGraph 多 Agent）
-│           ├── langgraph/    图编排（planner/supervisor/executor）
+│           ├── langgraph/    图编排（planner/supervisor/executor/synthesizer）
 │           ├── tools/        内置工具注册
 │           ├── memory.ts     五层记忆读写
 │           ├── sync.ts       数据同步 + 记忆生成
 │           ├── prompt.ts     System Prompt 构建
+│           ├── hybrid-search.ts  博客/藏经阁混合检索（关键词 + embedding）
 │           ├── mcp-loader.ts MCP 服务加载
 │           └── registry.ts   工具注册表
 ```

@@ -100,9 +100,11 @@ cultivation/
 |------|------|
 | `protocol.ts` | SSE 事件类型定义（`SpiritEvent` 联合类型） |
 | `registry.ts` | 工具注册表，`registerTool()` / `registerMCPAdapter()` |
-| `prompt.ts` | `buildSystemPrompt()` — 注入三层记忆，构建主控系统提示 |
-| `memory.ts` | 三层记忆：DailyLog / WeeklyPattern / PersonaProfile |
-| `sync.ts` | `syncToday()` — 从适配器拉取数据，生成当日 DailyLog |
+| `prompt.ts` | `buildSystemPrompt()` — 实时读取五层记忆，构建主控系统提示 |
+| `memory.ts` | 五层记忆读写：DailyLog / WeeklyPattern / PersonaProfile / Vow / Conversation |
+| `sync.ts` | `syncToday()` — 从适配器拉取数据，生成当日 DailyLog；触发周期记忆生成 |
+| `hybrid-search.ts` | 混合检索：关键词（MiniSearch）+ 语义（embedding），用于博客 / 藏经阁搜索 |
+| `mcp-loader.ts` | MCP 服务初始化，按 config 启动 stdio / http transport，自动注册工具 |
 
 #### 3.2 工具层 `spirit/tools/`
 
@@ -242,7 +244,7 @@ type SpiritEvent =
   | { type: 'done' }
 ```
 
-#### 3.5 记忆系统（memory.ts + prompt.ts + sync.ts）
+#### 3.5 五层记忆系统（memory.ts + prompt.ts + sync.ts）
 
 五层记忆，全部存储于 `content/spirit/`，构建 System Prompt 时实时读取：
 
