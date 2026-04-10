@@ -2,23 +2,21 @@
  * LeetCode CN 非官方 Adapter
  *
  * 设置步骤：
- *   1. 浏览器登录 leetcode.cn，打开 DevTools（F12）
- *      → Application → Cookies → https://leetcode.cn
- *      复制 LEETCODE_SESSION 和 csrftoken 两个值
- *   2. 在 .env.local 添加：
- *        LEETCODE_CN_USERNAME=你的用户名（URL中可见）
+ *   1. 浏览器登录 leetcode.cn → F12 → Application → Cookies → https://leetcode.cn
+ *      复制 LEETCODE_SESSION 和 csrftoken 两个 Cookie 值
+ *   2. .env.local 添加：
+ *        LEETCODE_CN_USERNAME=你的用户名（力扣个人主页 URL 里的那段，如 jinl）
  *        LEETCODE_CN_COOKIE=LEETCODE_SESSION=xxx; csrftoken=yyy
- *   3. 在 codelife.config.ts 设置 leetcode.provider = 'cn'
+ *   3. codelife.config.ts 设置 leetcode.provider = 'cn'
  *
  * Cookie 过期说明：
- *   - LEETCODE_SESSION 通常有效期数周，过期后重新从浏览器复制即可
- *   - 过期时 GraphQL 请求会返回 401/403，日志中会有提示
+ *   过期后 API 返回 401/403，重新从浏览器复制即可。
  *
- * 数据说明：
- *   - getStats()：总 AC 数按难度分类（Easy/Medium/Hard）
- *   - getProblems()：最近 100 道 AC 题目，去重保留最新一次
- *   - 题目难度缓存到 content/leetcode_difficulty_cache.json（每个 slug 只查一次）
- *   - category / note 无法从 API 获取，保留空字符串
+ * 实现说明：
+ *   - 通过 userStatus 获取 userSlug（非手机号/邮箱账号）
+ *   - 统计：userProfileUserQuestionProgress(userSlug)
+ *   - 近期 AC：submissionList(status: AC) 过滤，从 url 提取 titleSlug
+ *   - 难度：题目难度缓存到 content/leetcode_difficulty_cache.json，每个 slug 只查一次
  */
 
 import fs   from 'fs'
@@ -36,98 +34,89 @@ type DiffCache = Record<string, Difficulty>
 function loadDiffCache(): DiffCache {
   try { return JSON.parse(fs.readFileSync(DIFF_CACHE, 'utf-8')) as DiffCache } catch { return {} }
 }
-
-function saveDiffCache(cache: DiffCache) {
+function saveDiffCache(c: DiffCache) {
   fs.mkdirSync(path.dirname(DIFF_CACHE), { recursive: true })
-  fs.writeFileSync(DIFF_CACHE, JSON.stringify(cache, null, 2))
+  fs.writeFileSync(DIFF_CACHE, JSON.stringify(c, null, 2))
 }
 
-/** 从 "KEY=val; KEY2=val2" 格式中提取指定 key 的值 */
-function extractCookie(cookieStr: string, key: string): string {
-  const m = cookieStr.match(new RegExp(`(?:^|;\\s*)${key}=([^;]+)`))
-  return m?.[1]?.trim() ?? ''
+function extractCookie(str: string, key: string): string {
+  return str.match(new RegExp(`(?:^|;\\s*)${key}=([^;]+)`))?.[1]?.trim() ?? ''
 }
 
 // ── GraphQL 查询 ───────────────────────────────────────────────────
 
+const USER_STATUS_QUERY = `{ userStatus { userSlug } }`
+
 const STATS_QUERY = `
-  query userProfile($username: String!) {
-    matchedUser(username: $username) {
-      submitStats: submitStatsGlobal {
-        acSubmissionNum { difficulty count }
-      }
+  query userProgress($userSlug: String!) {
+    userProfileUserQuestionProgress(userSlug: $userSlug) {
+      numAcceptedQuestions { difficulty count }
     }
   }
 `
 
-const RECENT_AC_QUERY = `
-  query recentAcSubmissions($username: String!, $limit: Int!) {
-    recentAcSubmissionList(username: $username, limit: $limit) {
-      id
-      title
-      titleSlug
-      timestamp
-      lang
+// submissionList 支持 status 过滤，从 url 字段提取 titleSlug
+const SUBMISSIONS_QUERY = `
+  query submissions($offset: Int!, $limit: Int!) {
+    submissionList(offset: $offset, limit: $limit, status: AC) {
+      hasNext
+      submissions { id title lang timestamp url frontendId }
     }
   }
 `
 
 const QUESTION_QUERY = `
   query questionDifficulty($titleSlug: String!) {
-    question(titleSlug: $titleSlug) {
-      difficulty
-    }
+    question(titleSlug: $titleSlug) { difficulty }
   }
 `
 
 // ── Adapter ────────────────────────────────────────────────────────
 
 export class LeetcodeCNAdapter implements LeetcodeAdapter {
-  private username: string
-  private cookie:   string   // "LEETCODE_SESSION=xxx; csrftoken=yyy"
-  private cult:     CultivationConfig
+  private cookie: string
+  private cult:   CultivationConfig
+  private userSlug: string | null = null   // 懒加载
 
   constructor(config: LeetcodeConfig, cult: CultivationConfig) {
-    if (!config.cn) throw new Error(
-      '[LC CN] 请在 codelife.config.ts 配置 leetcode.cn，并在 .env.local 设置 LEETCODE_CN_USERNAME / LEETCODE_CN_COOKIE'
-    )
-    if (!config.cn.cookie) throw new Error(
+    if (!config.cn?.cookie) throw new Error(
       '[LC CN] LEETCODE_CN_COOKIE 未设置。\n' +
-      '请浏览器登录 leetcode.cn → F12 → Application → Cookies → 复制 LEETCODE_SESSION 和 csrftoken\n' +
-      '格式：LEETCODE_SESSION=xxx; csrftoken=yyy'
+      '浏览器登录 leetcode.cn → F12 → Application → Cookies\n' +
+      '复制 LEETCODE_SESSION 和 csrftoken，格式：\n' +
+      'LEETCODE_CN_COOKIE=LEETCODE_SESSION=xxx; csrftoken=yyy'
     )
-    this.username = config.cn.username
-    this.cookie   = config.cn.cookie
-    this.cult     = cult
+    this.cookie = config.cn.cookie
+    this.cult   = cult
   }
 
   // ── GraphQL 请求 ──────────────────────────────────────────────────
 
-  private async gql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-    const csrftoken = extractCookie(this.cookie, 'csrftoken')
-
-    const res = await fetch(LC_CN_GQL, {
+  private async gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+    const csrf = extractCookie(this.cookie, 'csrftoken')
+    const res  = await fetch(LC_CN_GQL, {
       method:  'POST',
       headers: {
         'Content-Type': 'application/json',
         'Cookie':        this.cookie,
-        'X-CSRFToken':   csrftoken,
+        'X-CSRFToken':   csrf,
         'Referer':       'https://leetcode.cn/',
-        'User-Agent':    'Mozilla/5.0 (compatible; CodeLife/1.0)',
       },
       body: JSON.stringify({ query, variables }),
     })
-
-    if (res.status === 401 || res.status === 403) {
-      throw new Error(
-        '[LC CN] Cookie 已过期，请重新从浏览器复制 LEETCODE_SESSION 和 csrftoken 到 .env.local 的 LEETCODE_CN_COOKIE'
-      )
-    }
+    if (res.status === 401 || res.status === 403) throw new Error(
+      '[LC CN] Cookie 已过期，请重新从浏览器复制 LEETCODE_SESSION 和 csrftoken 到 .env.local'
+    )
     if (!res.ok) throw new Error(`[LC CN] HTTP ${res.status}`)
-
-    const json = await res.json() as { data: T; errors?: unknown[] }
-    if (json.errors?.length) throw new Error(`[LC CN] GraphQL: ${JSON.stringify(json.errors)}`)
+    const json = await res.json() as { data: T; errors?: { message: string }[] }
+    if (json.errors?.length) throw new Error(`[LC CN] ${json.errors[0].message}`)
     return json.data
+  }
+
+  private async ensureUserSlug(): Promise<string> {
+    if (this.userSlug) return this.userSlug
+    const data = await this.gql<{ userStatus: { userSlug: string } }>(USER_STATUS_QUERY)
+    this.userSlug = data.userStatus.userSlug
+    return this.userSlug
   }
 
   // ── 难度查询（带文件缓存，并发 5） ────────────────────────────────
@@ -136,43 +125,30 @@ export class LeetcodeCNAdapter implements LeetcodeAdapter {
     const cache   = loadDiffCache()
     const missing = [...new Set(slugs)].filter(s => !cache[s])
 
-    if (missing.length > 0) {
-      for (let i = 0; i < missing.length; i += 5) {
-        const batch = missing.slice(i, i + 5)
-        await Promise.all(batch.map(async slug => {
-          try {
-            const data = await this.gql<{ question: { difficulty: string } | null }>(
-              QUESTION_QUERY, { titleSlug: slug }
-            )
-            const raw = data.question?.difficulty?.toLowerCase() ?? ''
-            cache[slug] = (['easy', 'medium', 'hard'].includes(raw) ? raw : 'medium') as Difficulty
-          } catch {
-            cache[slug] = 'medium'
-          }
-        }))
-      }
-      saveDiffCache(cache)
+    for (let i = 0; i < missing.length; i += 5) {
+      await Promise.all(missing.slice(i, i + 5).map(async slug => {
+        try {
+          const d = await this.gql<{ question: { difficulty: string } | null }>(QUESTION_QUERY, { titleSlug: slug })
+          const raw = d.question?.difficulty?.toLowerCase() ?? ''
+          cache[slug] = (['easy', 'medium', 'hard'].includes(raw) ? raw : 'medium') as Difficulty
+        } catch { cache[slug] = 'medium' }
+      }))
     }
-
+    if (missing.length > 0) saveDiffCache(cache)
     return cache
   }
 
   // ── 公开接口 ──────────────────────────────────────────────────────
 
   async getStats(): Promise<LeetcodeStats> {
+    const userSlug = await this.ensureUserSlug()
     const data = await this.gql<{
-      matchedUser: {
-        submitStats: { acSubmissionNum: Array<{ difficulty: string; count: number }> }
-      } | null
-    }>(STATS_QUERY, { username: this.username })
+      userProfileUserQuestionProgress: { numAcceptedQuestions: { difficulty: string; count: number }[] }
+    }>(STATS_QUERY, { userSlug })
 
-    const ac = data.matchedUser?.submitStats.acSubmissionNum ?? []
-    const getCount = (d: string) =>
-      ac.find(s => s.difficulty.toLowerCase() === d.toLowerCase())?.count ?? 0
-
-    const easy   = getCount('easy')
-    const medium = getCount('medium')
-    const hard   = getCount('hard')
+    const ac = data.userProfileUserQuestionProgress.numAcceptedQuestions
+    const get = (d: string) => ac.find(s => s.difficulty === d)?.count ?? 0
+    const easy = get('EASY'), medium = get('MEDIUM'), hard = get('HARD')
 
     return {
       totalSolved: easy + medium + hard,
@@ -186,47 +162,47 @@ export class LeetcodeCNAdapter implements LeetcodeAdapter {
   }
 
   async getProblems(): Promise<LeetcodeProblem[]> {
-    const data = await this.gql<{
-      recentAcSubmissionList: Array<{
-        id:        string
-        title:     string
-        titleSlug: string
-        timestamp: string
-        lang:      string
-      }>
-    }>(RECENT_AC_QUERY, { username: this.username, limit: 100 })
+    // 拉最多 100 条 AC 记录（两页各 50）
+    const allSubs: Array<{ id: string; title: string; lang: string; timestamp: string; url: string; frontendId: number }> = []
 
-    const submissions = data.recentAcSubmissionList ?? []
-    const diffCache   = await this.resolveDifficulties(submissions.map(s => s.titleSlug))
+    for (const offset of [0, 50]) {
+      const data = await this.gql<{
+        submissionList: {
+          hasNext: boolean
+          submissions: typeof allSubs
+        }
+      }>(SUBMISSIONS_QUERY, { offset, limit: 50 })
+      allSubs.push(...(data.submissionList.submissions ?? []))
+      if (!data.submissionList.hasNext) break
+    }
+
+    // 从 url 提取 titleSlug，去重保留最新 AC
+    const seen = new Set<number>()
+    const unique = allSubs
+      .map(s => ({ ...s, titleSlug: s.url.match(/\/problems\/([^/]+)\//)?.[1] ?? '' }))
+      .filter(s => { if (seen.has(s.frontendId)) return false; seen.add(s.frontendId); return true })
+
+    const diffCache = await this.resolveDifficulties(unique.map(s => s.titleSlug))
 
     const pointsMap: Record<Difficulty, number> = {
       easy: this.cult.leetcode.easy, medium: this.cult.leetcode.medium, hard: this.cult.leetcode.hard,
     }
-    const labelMap: Record<Difficulty, string> = {
-      easy: '初锻', medium: '淬炼', hard: '神铸',
-    }
+    const labelMap: Record<Difficulty, string> = { easy: '初锻', medium: '淬炼', hard: '神铸' }
 
-    const seen = new Set<string>()
-    const problems: LeetcodeProblem[] = []
-
-    for (const s of submissions) {
-      if (seen.has(s.titleSlug)) continue
-      seen.add(s.titleSlug)
+    return unique.map(s => {
       const diff = diffCache[s.titleSlug] ?? 'medium'
-      problems.push({
-        id:           Number(s.id),
+      return {
+        id:           s.frontendId,
         title:        s.title,
         titleSlug:    s.titleSlug,
         difficulty:   diff,
-        language:     s.lang ?? '',
+        language:     s.lang,
         category:     '',
         solvedAt:     new Date(Number(s.timestamp) * 1000),
         note:         '',
         pointsEarned: pointsMap[diff],
         pointsLabel:  labelMap[diff],
-      })
-    }
-
-    return problems.sort((a, b) => b.solvedAt.getTime() - a.solvedAt.getTime())
+      }
+    })
   }
 }
