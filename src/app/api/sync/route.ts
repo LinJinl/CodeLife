@@ -32,6 +32,8 @@
  */
 
 import { revalidateTag } from 'next/cache'
+import config from '../../../../codelife.config'
+import { createBlogAdapter } from '@/lib/adapters/blog'
 
 const SYNC_SECRET = process.env.SYNC_SECRET ?? ''
 
@@ -58,6 +60,13 @@ export async function GET(request: Request) {
   const revalidated: string[] = []
 
   if (source === 'all' || source === 'blog') {
+    // 先重建 WC 文件缓存（含重试 wordCount=0 的条目），再失效 Next.js 缓存
+    try {
+      const blog = createBlogAdapter(config.blog, config.cultivation)
+      await blog.getPosts()
+    } catch {
+      // 失败不中断，至少失效缓存让下次请求重试
+    }
     revalidateTag('blog', 'max')
     revalidated.push('blog')
   }

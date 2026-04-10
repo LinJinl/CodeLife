@@ -183,7 +183,8 @@ export class NotionBlogAdapter implements BlogAdapter {
 
     for (const page of pages) {
       const entry = cache[page.id]
-      if (!entry || entry.lastEdited !== page.last_edited_time) {
+      // wordCount===0 视为拉取失败的缓存，强制重试
+      if (!entry || entry.lastEdited !== page.last_edited_time || entry.wordCount === 0) {
         missing.push(page)
       }
     }

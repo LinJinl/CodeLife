@@ -1,4 +1,5 @@
 import { getBlogPosts } from '@/lib/data'
+import { SyncBlogButton } from '@/components/SyncBlogButton'
 
 export const revalidate = 3600
 
@@ -69,6 +70,10 @@ export default async function BlogPage({
           <div className="section-head-line r" />
           <div className="section-head-text">{tag ? `# ${tag}` : '全部心法'}</div>
           <div className="section-head-line" />
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20, marginTop: -20 }}>
+          <SyncBlogButton />
         </div>
 
         {posts.length === 0 ? (
