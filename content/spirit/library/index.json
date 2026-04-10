@@ -1,0 +1,15 @@
+[
+  {
+    "id": "mnokzhnkqnpf",
+    "url": "https://www.anthropic.com/engineering/harness-design-long-running-apps",
+    "title": "Harness design for long-running application development \\ Anthropic",
+    "savedAt": "2026-04-07T12:14:00.224Z",
+    "summary": "Anthropic 通过「harness design」提升 Claude 在前端设计与自主开发中的能力，借鉴 GAN 思路实现了规划-生成-评估多智能体架构，有效应对长任务中的上下文管理与任务分解问题，支持多小时全栈应用自动生成。",
+    "tags": [
+      "AI工程",
+      "多智能体",
+      "软件工程"
+    ],
+    "category": "工程实践"
+  }
+]

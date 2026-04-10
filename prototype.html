@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>道途 · 洞府</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=ZCOOL+XiaoWei&family=Noto+Serif+SC:wght@300;400;600&family=JetBrains+Mono:wght@300;400&family=Cinzel:wght@400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --void:         #07050A;
+  --cave:         #0E0B09;
+  --deep:         #14110E;
+  --surface:      #1B1714;
+
+  --gold:         #C49535;
+  --gold-bright:  #D9AB48;
+  --gold-dim:     #7A5C24;
+  --gold-line:    rgba(196,149,53,0.20);
+  --gold-wash:    rgba(196,149,53,0.05);
+
+  --ink:          #BEB29A;
+  --ink-mid:      #857769;
+  --ink-dim:      #554A3C;
+  --ink-trace:    #2E2620;
+
+  --seal:         #833028;
+  --jade:         #3B6A50;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: 'Noto Serif SC', serif;
+  font-weight: 300;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ─── Fixed World ─────────────────────────────────────── */
+.world {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Sky */
+.world-sky {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg,
+    #04030A 0%,
+    #07050C 30%,
+    #0C0908 65%,
+    #110D0A 100%
+  );
+}
+
+/* Mountain silhouettes */
+.world-mountains {
+  position: absolute;
+  bottom: 0; left: 0;
+  width: 100%; height: 72%;
+}
+
+/* Mist */
+.mist {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform, opacity;
+}
+
+.mist-a {
+  width: 85%; height: 38%;
+  left: -12%; top: 36%;
+  background: radial-gradient(ellipse, rgba(158,128,88,0.042) 0%, transparent 65%);
+  filter: blur(36px);
+  animation: drift-a 50s ease-in-out infinite alternate;
+}
+.mist-b {
+  width: 75%; height: 32%;
+  right: -18%; top: 44%;
+  background: radial-gradient(ellipse, rgba(140,112,72,0.036) 0%, transparent 65%);
+  filter: blur(44px);
+  animation: drift-b 65s ease-in-out infinite alternate;
+}
+.mist-c {
+  width: 55%; height: 26%;
+  left: 18%; top: 58%;
+  background: radial-gradient(ellipse, rgba(175,142,95,0.03) 0%, transparent 70%);
+  filter: blur(28px);
+  animation: drift-c 38s ease-in-out infinite alternate;
+}
+
+@keyframes drift-a {
+  from { transform: translate(0,0);     opacity: 0.55; }
+  to   { transform: translate(3%,-2%); opacity: 0.9;  }
+}
+@keyframes drift-b {
+  from { transform: translate(0,0);      opacity: 0.8; }
+  to   { transform: translate(-4%, 2%); opacity: 0.45; }
+}
+@keyframes drift-c {
+  from { transform: translate(0,0);     opacity: 0.5; }
+  to   { transform: translate(2%,-1%); opacity: 0.85; }
+}
+
+/* Vignette — frame the cave */
+.world-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 90% 90% at 50% 45%,
+    transparent 25%,
+    rgba(4,3,7,0.55) 100%
+  );
+}
+
+/* Incense smoke canvas */
+#smoke {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+}
+
+/* ─── Header ──────────────────────────────────────────── */
+header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 50;
+  text-align: center;
+  padding: 26px 0 20px;
+  background: linear-gradient(180deg, rgba(4,3,8,0.88) 0%, transparent 100%);
+}
+
+.h-name {
+  font-family: 'ZCOOL XiaoWei', serif;
+  font-size: 17px;
+  letter-spacing: 14px;
+  text-indent: 14px;
+  color: var(--gold);
+  opacity: 0.88;
+  margin-bottom: 10px;
+}
+
+.h-rule {
+  width: 180px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-line), transparent);
+  margin: 0 auto 10px;
+}
+
+nav {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.nav-btn {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 13px;
+  letter-spacing: 4px;
+  text-indent: 4px;
+  color: var(--ink-dim);
+  padding: 4px 18px;
+  cursor: pointer;
+  transition: color 0.4s;
+  background: none;
+  border: none;
+  outline: none;
+}
+.nav-btn:hover  { color: var(--ink-mid); }
+.nav-btn.active { color: var(--gold); }
+.nav-btn.active::after {
+  content: '·';
+  display: block;
+  text-align: center;
+  font-size: 8px;
+  color: var(--gold);
+  margin-top: 1px;
+  line-height: 0;
+}
+
+.nav-sep {
+  color: var(--ink-trace);
+  font-size: 9px;
+  user-select: none;
+}
+
+/* ─── Content wrapper ─────────────────────────────────── */
+#app {
+  position: relative;
+  z-index: 10;
+}
+
+/* ─── Pages ───────────────────────────────────────────── */
+.page { display: none; }
+.page.on {
+  display: block;
+  animation: reveal 0.65s ease-out both;
+}
+
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── HOME ────────────────────────────────────────────── */
+.home-hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 120px 20px 80px;
+}
+
+.hero-eyebrow {
+  font-family: 'Cinzel', serif;
+  font-size: 10px;
+  letter-spacing: 5px;
+  color: var(--ink-dim);
+  margin-bottom: 32px;
+}
+
+.hero-realm {
+  font-family: 'ZCOOL XiaoWei', serif;
+  font-size: clamp(60px, 10vw, 96px);
+  letter-spacing: 24px;
+  text-indent: 24px;
+  color: var(--gold);
+  line-height: 1;
+  margin-bottom: 14px;
+  opacity: 0.9;
+}
+
+.hero-stage {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 17px;
+  letter-spacing: 12px;
+  text-indent: 12px;
+  color: var(--ink-mid);
+  margin-bottom: 52px;
+}
+
+/* Ornate divider */
+.ornate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 360px;
+  margin: 0 auto 48px;
+}
+.ornate-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-line));
+}
+.ornate-line.r {
+  background: linear-gradient(270deg, transparent, var(--gold-line));
+}
+.ornate-glyph {
+  color: var(--gold-dim);
+  font-size: 9px;
+  letter-spacing: 4px;
+}
+
+/* Cultivation facts */
+.cult-facts {
+  display: flex;
+  gap: 56px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 40px;
+}
+.fact {
+  text-align: center;
+}
+.fact-val {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 26px;
+  color: var(--ink);
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+.fact-key {
+  font-size: 11px;
+  letter-spacing: 4px;
+  text-indent: 4px;
+  color: var(--ink-dim);
+}
+
+.hero-note {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 13px;
+  color: var(--ink-dim);
+  letter-spacing: 3px;
+  line-height: 2;
+}
+.hero-note em {
+  color: var(--gold-dim);
+  font-style: normal;
+}
+
+/* ─── Log section ─────────────────────────────────────── */
+.log-section {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 0 36px 100px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 40px;
+}
+.section-head-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-line));
+}
+.section-head-line.r {
+  background: linear-gradient(270deg, transparent, var(--gold-line));
+}
+.section-head-text {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 12px;
+  letter-spacing: 4px;
+  text-indent: 4px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+/* Activity log entries */
+.log-entry {
+  display: grid;
+  grid-template-columns: 52px 6px 1fr auto;
+  gap: 0 14px;
+  align-items: baseline;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--ink-trace);
+  transition: border-color 0.35s;
+}
+.log-entry:hover { border-bottom-color: rgba(196,149,53,0.14); }
+
+.log-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.5px;
+}
+.log-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--ink-trace);
+  margin-top: 5px;
+  flex-shrink: 0;
+  align-self: start;
+}
+.log-dot.b { background: var(--gold-dim); }
+.log-dot.c { background: var(--jade); opacity: 0.75; }
+.log-dot.g { background: var(--ink-dim); opacity: 0.6; }
+.log-dot.a { background: var(--seal); opacity: 0.8; }
+
+.log-text {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 14px;
+  color: var(--ink-mid);
+  line-height: 1.65;
+}
+.log-text strong {
+  color: var(--ink);
+  font-weight: 400;
+}
+.log-pts {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--gold-dim);
+  opacity: 0.7;
+  white-space: nowrap;
+  padding-left: 10px;
+}
+
+/* ─── PAGE HEADER (reused) ─────────────────────────────── */
+.page-crown {
+  min-height: 52vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  text-align: center;
+  padding: 120px 20px 64px;
+}
+.crown-title {
+  font-family: 'ZCOOL XiaoWei', serif;
+  font-size: clamp(38px, 6vw, 58px);
+  letter-spacing: 18px;
+  text-indent: 18px;
+  color: var(--gold);
+  opacity: 0.86;
+  margin-bottom: 14px;
+}
+.crown-sub {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 13px;
+  letter-spacing: 4px;
+  text-indent: 4px;
+  color: var(--ink-dim);
+}
+
+/* ─── BLOG (心法) ─────────────────────────────────────── */
+.scroll-list {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 0 36px 100px;
+}
+
+.scroll-entry {
+  display: flex;
+  gap: 22px;
+  align-items: flex-start;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--ink-trace);
+  cursor: pointer;
+  transition: border-color 0.35s;
+}
+.scroll-entry:hover { border-bottom-color: rgba(196,149,53,0.18); }
+.scroll-entry:hover .scroll-title { color: var(--gold-bright); }
+
+.scroll-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+  padding-top: 2px;
+  width: 56px;
+}
+.scroll-body { flex: 1; }
+.scroll-title {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 16px;
+  color: var(--ink);
+  letter-spacing: 2px;
+  margin-bottom: 9px;
+  line-height: 1.5;
+  transition: color 0.35s;
+}
+.scroll-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 1px;
+}
+.seal-mark {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 10px;
+  color: var(--seal);
+  border: 1px solid rgba(131,48,40,0.35);
+  padding: 1px 7px;
+  letter-spacing: 2px;
+  text-indent: 2px;
+}
+
+/* ─── LEETCODE (炼丹) ─────────────────────────────────── */
+.furnace-body {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 0 36px 100px;
+}
+
+.furnace-prose {
+  text-align: center;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+  color: var(--ink-mid);
+  letter-spacing: 3px;
+  line-height: 2.4;
+  margin-bottom: 56px;
+}
+.furnace-prose em { color: var(--gold-dim); font-style: normal; }
+.furnace-prose strong { color: var(--ink); font-weight: 400; }
+
+/* Category list — no bars */
+.pill-list { margin-bottom: 50px; }
+
+.pill-item {
+  display: flex;
+  align-items: center;
+  padding: 17px 0;
+  border-bottom: 1px solid var(--ink-trace);
+  gap: 20px;
+  cursor: pointer;
+  transition: padding-left 0.3s, border-color 0.3s;
+}
+.pill-item:hover {
+  padding-left: 8px;
+  border-bottom-color: rgba(196,149,53,0.15);
+}
+
+.pill-name {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+  color: var(--ink);
+  letter-spacing: 2px;
+  flex: 1;
+}
+.pill-n {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px;
+  color: var(--ink-mid);
+  letter-spacing: -1px;
+}
+.pill-state {
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-indent: 2px;
+  color: var(--ink-dim);
+  width: 52px;
+  text-align: right;
+}
+.pill-state.mastered { color: var(--gold-dim); }
+
+/* Recent refined pills */
+.recent-label {
+  font-size: 11px;
+  letter-spacing: 4px;
+  text-indent: 4px;
+  color: var(--ink-dim);
+  margin-bottom: 24px;
+}
+
+.pill-record {
+  display: grid;
+  grid-template-columns: 52px 36px 1fr auto;
+  gap: 0 14px;
+  align-items: baseline;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--ink-trace);
+  transition: border-color 0.3s;
+}
+.pill-record:hover { border-bottom-color: rgba(196,149,53,0.14); }
+
+.pr-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+.pr-grade {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 1px;
+}
+.pr-grade.hard { color: var(--seal); opacity: 0.8; }
+.pr-grade.med  { color: var(--gold-dim); }
+.pr-grade.easy { color: var(--jade); opacity: 0.75; }
+
+.pr-name {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 14px;
+  color: var(--ink-mid);
+  letter-spacing: 1px;
+}
+.pr-done {
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-indent: 2px;
+  color: var(--gold-dim);
+  opacity: 0.8;
+}
+
+/* ─── GITHUB (铸剑) ───────────────────────────────────── */
+.forge-body {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 0 36px 100px;
+}
+
+.forge-prose {
+  text-align: center;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+  color: var(--ink-mid);
+  letter-spacing: 3px;
+  line-height: 2.4;
+  margin-bottom: 56px;
+}
+.forge-prose em { color: var(--gold-dim); font-style: normal; }
+
+/* Weapon entries */
+.weapon {
+  padding: 24px 0;
+  border-bottom: 1px solid var(--ink-trace);
+  cursor: pointer;
+  transition: padding-left 0.3s, border-color 0.3s;
+}
+.weapon:hover {
+  padding-left: 8px;
+  border-bottom-color: rgba(196,149,53,0.2);
+}
+
+.weapon-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+.weapon-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 17px;
+  color: var(--ink);
+  letter-spacing: 0.5px;
+}
+.weapon-grade {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-indent: 2px;
+  color: var(--gold-dim);
+  border: 1px solid rgba(196,149,53,0.22);
+  padding: 2px 8px;
+}
+.weapon-desc {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 13px;
+  color: var(--ink-dim);
+  letter-spacing: 1px;
+  line-height: 1.8;
+}
+
+/* Commit list */
+.commit-list { margin-top: 48px; }
+
+.commit {
+  display: grid;
+  grid-template-columns: 52px 58px 1fr auto;
+  gap: 0 12px;
+  align-items: baseline;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--ink-trace);
+  transition: border-color 0.3s;
+}
+.commit:hover { border-bottom-color: rgba(196,149,53,0.14); }
+
+.c-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+.c-hash {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-trace);
+  letter-spacing: 0.5px;
+}
+.c-msg {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-mid);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.3px;
+}
+.c-repo {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 1px;
+  white-space: nowrap;
+  padding-left: 8px;
+}
+</style>
+</head>
+<body>
+
+<!-- ─── World ─── -->
+<div class="world">
+  <div class="world-sky"></div>
+
+  <svg class="world-mountains" viewBox="0 0 1440 520"
+       preserveAspectRatio="xMidYMax slice"
+       xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+
+    <!-- Farthest range — barely there -->
+    <path d="M0 340 C120 180 220 260 340 200 C460 140 540 220 660 170
+             C780 120 860 190 980 160 C1100 130 1220 200 1340 170 L1440 180
+             L1440 520 L0 520 Z"
+          fill="#18140F" opacity="0.45"/>
+
+    <!-- Mid range -->
+    <path d="M0 390 C80 280 180 340 280 290 C400 240 480 310 600 260
+             C720 210 800 280 920 240 C1040 200 1140 270 1260 240
+             C1340 220 1400 260 1440 250 L1440 520 L0 520 Z"
+          fill="#13100C" opacity="0.65"/>
+
+    <!-- Near range -->
+    <path d="M0 440 C60 370 140 410 220 380 C340 340 420 400 540 370
+             C660 340 740 390 860 360 C980 330 1060 380 1180 355
+             C1280 335 1380 370 1440 360 L1440 520 L0 520 Z"
+          fill="#0F0C09" opacity="0.82"/>
+
+    <!-- Foreground ground -->
+    <path d="M0 490 C200 470 400 480 600 468 C800 456 1000 475 1200 465
+             C1320 460 1400 470 1440 468 L1440 520 L0 520 Z"
+          fill="#0A0806"/>
+  </svg>
+
+  <div class="mist mist-a"></div>
+  <div class="mist mist-b"></div>
+  <div class="mist mist-c"></div>
+  <div class="world-vignette"></div>
+  <canvas id="smoke"></canvas>
+</div>
+
+<!-- ─── Header ─── -->
+<header>
+  <div class="h-name">道　途</div>
+  <div class="h-rule"></div>
+  <nav>
+    <button class="nav-btn active" onclick="go('home')">洞府</button>
+    <span class="nav-sep">·</span>
+    <button class="nav-btn" onclick="go('blog')">心法</button>
+    <span class="nav-sep">·</span>
+    <button class="nav-btn" onclick="go('lc')">炼丹</button>
+    <span class="nav-sep">·</span>
+    <button class="nav-btn" onclick="go('gh')">铸剑</button>
+    <span class="nav-sep">·</span>
+    <button class="nav-btn" onclick="go('home')">藏典</button>
+  </nav>
+</header>
+
+<!-- ─── App ─── -->
+<div id="app">
+
+  <!-- ════ HOME ════ -->
+  <div class="page on" id="p-home">
+    <div class="home-hero">
+      <div class="hero-eyebrow">CURRENT REALM</div>
+
+      <div class="hero-realm">金丹期</div>
+      <div class="hero-stage">第　三　重</div>
+
+      <div class="ornate">
+        <div class="ornate-line r"></div>
+        <div class="ornate-glyph">◆　◆　◆</div>
+        <div class="ornate-line"></div>
+      </div>
+
+      <div class="cult-facts">
+        <div class="fact">
+          <div class="fact-val">5,234</div>
+          <div class="fact-key">修　为</div>
+        </div>
+        <div class="fact">
+          <div class="fact-val">321</div>
+          <div class="fact-key">入　道　天　数</div>
+        </div>
+        <div class="fact">
+          <div class="fact-val">12</div>
+          <div class="fact-key">连　续　不　辍</div>
+        </div>
+      </div>
+
+      <div class="hero-note">
+        距<em>元婴期</em>，尚余九千七百六十六修为
+      </div>
+    </div>
+
+    <!-- Recent deeds -->
+    <div class="log-section">
+      <div class="section-head">
+        <div class="section-head-line r"></div>
+        <div class="section-head-text">近期修炼记录</div>
+        <div class="section-head-line"></div>
+      </div>
+
+      <div class="log-entry">
+        <div class="log-date">04-07</div>
+        <div class="log-dot a"></div>
+        <div class="log-text">成就·<strong>道心坚固</strong>，连续修炼十二日不辍</div>
+        <div class="log-pts"></div>
+      </div>
+      <div class="log-entry">
+        <div class="log-date">04-07</div>
+        <div class="log-dot c"></div>
+        <div class="log-text">炼丹·习<strong>「编辑距离」</strong>，悟矣</div>
+        <div class="log-pts">+200</div>
+      </div>
+      <div class="log-entry">
+        <div class="log-date">04-07</div>
+        <div class="log-dot b"></div>
+        <div class="log-text">著述·<strong>《深入理解 RPC 框架的设计哲学》</strong></div>
+        <div class="log-pts">+200</div>
+      </div>
+      <div class="log-entry">
+        <div class="log-date">04-06</div>
+        <div class="log-dot g"></div>
+        <div class="log-text">铸剑·<strong>feat: add OAuth2.0 login system</strong></div>
+        <div class="log-pts">+15</div>
+      </div>
+      <div class="log-entry">
+        <div class="log-date">04-06</div>
+        <div class="log-dot c"></div>
+        <div class="log-text">炼丹·习<strong>「最长公共子序列」</strong>，悟矣</div>
+        <div class="log-pts">+80</div>
+      </div>
+      <div class="log-entry">
+        <div class="log-date">04-05</div>
+        <div class="log-dot b"></div>
+        <div class="log-text">著述·<strong>《动态规划的「道」与「术」》</strong></div>
+        <div class="log-pts">+80</div>
+      </div>
+      <div class="log-entry">
+        <div class="log-date">04-05</div>
+        <div class="log-dot g"></div>
+        <div class="log-text">铸剑·<strong>fix: resolve memory leak in worker pool</strong></div>
+        <div class="log-pts">+15</div>
+      </div>
+      <div class="log-entry">
+        <div class="log-date">04-04</div>
+        <div class="log-dot c"></div>
+        <div class="log-text">炼丹·习<strong>「乘积最大子数组」</strong>，悟矣</div>
+        <div class="log-pts">+80</div>
+      </div>
+      <div class="log-entry">
+        <div class="log-date">04-03</div>
+        <div class="log-dot b"></div>
+        <div class="log-text">著述·<strong>《为什么好的命名是最好的注释》</strong></div>
+        <div class="log-pts">+80</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ BLOG ════ -->
+  <div class="page" id="p-blog">
+    <div class="page-crown">
+      <div class="crown-title">心法卷轴</div>
+      <div class="crown-sub">著述之录　·　顿悟之迹</div>
+    </div>
+
+    <div class="scroll-list">
+      <div class="section-head">
+        <div class="section-head-line r"></div>
+        <div class="section-head-text">全部心法</div>
+        <div class="section-head-line"></div>
+      </div>
+
+      <div class="scroll-entry">
+        <div class="scroll-date">04-07</div>
+        <div class="scroll-body">
+          <div class="scroll-title">深入理解 RPC 框架的设计哲学</div>
+          <div class="scroll-meta">
+            技术感悟　·　2,340 字
+            <span class="seal-mark">大悟</span>
+          </div>
+        </div>
+      </div>
+      <div class="scroll-entry">
+        <div class="scroll-date">04-05</div>
+        <div class="scroll-body">
+          <div class="scroll-title">动态规划的「道」与「术」</div>
+          <div class="scroll-meta">
+            算法心得　·　1,200 字
+            <span class="seal-mark">顿悟</span>
+          </div>
+        </div>
+      </div>
+      <div class="scroll-entry">
+        <div class="scroll-date">04-03</div>
+        <div class="scroll-body">
+          <div class="scroll-title">为什么好的命名是最好的注释</div>
+          <div class="scroll-meta">
+            技术感悟　·　680 字
+            <span class="seal-mark">顿悟</span>
+          </div>
+        </div>
+      </div>
+      <div class="scroll-entry">
+        <div class="scroll-date">03-28</div>
+        <div class="scroll-body">
+          <div class="scroll-title">《DDIA》读后感 — 数据密集型应用的世界观</div>
+          <div class="scroll-meta">
+            读书札记　·　3,100 字
+            <span class="seal-mark">大悟</span>
+          </div>
+        </div>
+      </div>
+      <div class="scroll-entry">
+        <div class="scroll-date">03-22</div>
+        <div class="scroll-body">
+          <div class="scroll-title">Go 语言的错误处理哲学</div>
+          <div class="scroll-meta">技术感悟　·　1,560 字</div>
+        </div>
+      </div>
+      <div class="scroll-entry">
+        <div class="scroll-date">03-15</div>
+        <div class="scroll-body">
+          <div class="scroll-title">从 CAP 定理看分布式系统的取舍</div>
+          <div class="scroll-meta">
+            技术感悟　·　2,800 字
+            <span class="seal-mark">大悟</span>
+          </div>
+        </div>
+      </div>
+      <div class="scroll-entry">
+        <div class="scroll-date">03-08</div>
+        <div class="scroll-body">
+          <div class="scroll-title">记一次生产环境内存泄漏排查</div>
+          <div class="scroll-meta">实战纪录　·　1,890 字</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ LEETCODE ════ -->
+  <div class="page" id="p-lc">
+    <div class="page-crown">
+      <div class="crown-title">炼丹炉</div>
+      <div class="crown-sub">千锤百炼　·　方成灵丹</div>
+    </div>
+
+    <div class="furnace-body">
+      <div class="furnace-prose">
+        已炼灵丹共 <strong>246 枚</strong><br>
+        <em>大丹</em> 二十三枚　<em>中丹</em> 八十九枚　<em>小丹</em> 百三十四枚<br>
+        今日炉火正旺，新炼三枚
+      </div>
+
+      <div class="section-head" style="margin-bottom:28px;">
+        <div class="section-head-line r"></div>
+        <div class="section-head-text">丹方分类</div>
+        <div class="section-head-line"></div>
+      </div>
+
+      <div class="pill-list">
+        <div class="pill-item">
+          <div class="pill-name">数组与哈希</div>
+          <div class="pill-n">40</div>
+          <div class="pill-state mastered">炼成</div>
+        </div>
+        <div class="pill-item">
+          <div class="pill-name">动态规划</div>
+          <div class="pill-n">36</div>
+          <div class="pill-state">修炼中</div>
+        </div>
+        <div class="pill-item">
+          <div class="pill-name">字符串</div>
+          <div class="pill-n">30</div>
+          <div class="pill-state mastered">炼成</div>
+        </div>
+        <div class="pill-item">
+          <div class="pill-name">树与图</div>
+          <div class="pill-n">28</div>
+          <div class="pill-state">修炼中</div>
+        </div>
+        <div class="pill-item">
+          <div class="pill-name">二分查找</div>
+          <div class="pill-n">22</div>
+          <div class="pill-state">修炼中</div>
+        </div>
+        <div class="pill-item">
+          <div class="pill-name">回溯</div>
+          <div class="pill-n">18</div>
+          <div class="pill-state">初学</div>
+        </div>
+        <div class="pill-item">
+          <div class="pill-name">贪心</div>
+          <div class="pill-n">15</div>
+          <div class="pill-state">初学</div>
+        </div>
+      </div>
+
+      <div class="section-head" style="margin:44px 0 28px;">
+        <div class="section-head-line r"></div>
+        <div class="section-head-text">近期炼制</div>
+        <div class="section-head-line"></div>
+      </div>
+
+      <div class="pill-record">
+        <div class="pr-date">04-07</div>
+        <div class="pr-grade hard">大丹</div>
+        <div class="pr-name">编辑距离</div>
+        <div class="pr-done">已悟</div>
+      </div>
+      <div class="pill-record">
+        <div class="pr-date">04-06</div>
+        <div class="pr-grade med">中丹</div>
+        <div class="pr-name">最长公共子序列</div>
+        <div class="pr-done">已悟</div>
+      </div>
+      <div class="pill-record">
+        <div class="pr-date">04-05</div>
+        <div class="pr-grade easy">小丹</div>
+        <div class="pr-name">爬楼梯</div>
+        <div class="pr-done">已悟</div>
+      </div>
+      <div class="pill-record">
+        <div class="pr-date">04-04</div>
+        <div class="pr-grade med">中丹</div>
+        <div class="pr-name">乘积最大子数组</div>
+        <div class="pr-done">已悟</div>
+      </div>
+      <div class="pill-record">
+        <div class="pr-date">04-03</div>
+        <div class="pr-grade hard">大丹</div>
+        <div class="pr-name">正则表达式匹配</div>
+        <div class="pr-done">已悟</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ GITHUB ════ -->
+  <div class="page" id="p-gh">
+    <div class="page-crown">
+      <div class="crown-title">铸剑台</div>
+      <div class="crown-sub">日日铸剑　·　终成神器</div>
+    </div>
+
+    <div class="forge-body">
+      <div class="forge-prose">
+        铸剑台上，现有神兵 <em>两把</em><br>
+        入道以来，共铸 <em>三百八十七锤</em><br>
+        近七日未曾辍停
+      </div>
+
+      <div class="section-head" style="margin-bottom:0;">
+        <div class="section-head-line r"></div>
+        <div class="section-head-text">当前神兵</div>
+        <div class="section-head-line"></div>
+      </div>
+
+      <div class="weapon">
+        <div class="weapon-title">
+          <div class="weapon-name">CodeLife</div>
+          <div class="weapon-grade">上品神兵</div>
+        </div>
+        <div class="weapon-desc">
+          以 Next.js 铸就，修仙者的成长记录洞府。<br>
+          共铸一百二十七锤，上次修炼于今日。
+        </div>
+      </div>
+
+      <div class="weapon">
+        <div class="weapon-title">
+          <div class="weapon-name">go-rpc-framework</div>
+          <div class="weapon-grade">中品法器</div>
+        </div>
+        <div class="weapon-desc">
+          Go 语言锻造，轻量级 RPC 框架。<br>
+          共铸两百三十四锤，上次修炼于三日前。
+        </div>
+      </div>
+
+      <div class="section-head" style="margin:44px 0 28px;">
+        <div class="section-head-line r"></div>
+        <div class="section-head-text">铸造记录</div>
+        <div class="section-head-line"></div>
+      </div>
+
+      <div class="commit-list">
+        <div class="commit">
+          <div class="c-date">04-07</div>
+          <div class="c-hash">a3f2b1c</div>
+          <div class="c-msg">feat: add cultivation level breakthrough animation</div>
+          <div class="c-repo">CodeLife</div>
+        </div>
+        <div class="commit">
+          <div class="c-date">04-07</div>
+          <div class="c-hash">8e5d920</div>
+          <div class="c-msg">feat: implement heatmap calendar component</div>
+          <div class="c-repo">CodeLife</div>
+        </div>
+        <div class="commit">
+          <div class="c-date">04-06</div>
+          <div class="c-hash">c1a4e73</div>
+          <div class="c-msg">feat: add OAuth2.0 login system</div>
+          <div class="c-repo">CodeLife</div>
+        </div>
+        <div class="commit">
+          <div class="c-date">04-06</div>
+          <div class="c-hash">9b2f4d1</div>
+          <div class="c-msg">fix: resolve memory leak in worker pool</div>
+          <div class="c-repo">go-rpc</div>
+        </div>
+        <div class="commit">
+          <div class="c-date">04-05</div>
+          <div class="c-hash">3d7a890</div>
+          <div class="c-msg">refactor: clean up connection handler logic</div>
+          <div class="c-repo">go-rpc</div>
+        </div>
+        <div class="commit">
+          <div class="c-date">04-05</div>
+          <div class="c-hash">5f2c31e</div>
+          <div class="c-msg">docs: update API reference documentation</div>
+          <div class="c-repo">go-rpc</div>
+        </div>
+        <div class="commit">
+          <div class="c-date">04-04</div>
+          <div class="c-hash">7a1b5f3</div>
+          <div class="c-msg">feat: add database connection pooling</div>
+          <div class="c-repo">CodeLife</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /#app -->
+
+<script>
+/* ─── Navigation ──────────────────────────────────────── */
+const pageMap = {
+  home: 'p-home',
+  blog: 'p-blog',
+  lc:   'p-lc',
+  gh:   'p-gh',
+};
+const navLabels = {
+  home: '洞府', blog: '心法', lc: '炼丹', gh: '铸剑'
+};
+
+function go(id) {
+  Object.values(pageMap).forEach(pid => {
+    const el = document.getElementById(pid);
+    el.classList.remove('on');
+  });
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+
+  const page = document.getElementById(pageMap[id]);
+  if (page) {
+    page.classList.add('on');
+    // Re-trigger animation
+    page.style.animation = 'none';
+    page.offsetHeight;
+    page.style.animation = '';
+  }
+
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    if (b.textContent === navLabels[id]) b.classList.add('active');
+  });
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* ─── Incense smoke ───────────────────────────────────── */
+const canvas = document.getElementById('smoke');
+const ctx    = canvas.getContext('2d');
+
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Three origin points: incense sticks along the mountain base
+const ORIGINS = [
+  { rx: 0.28, ry: 0.80 },
+  { rx: 0.50, ry: 0.85 },
+  { rx: 0.74, ry: 0.78 },
+];
+
+function mkParticle(o) {
+  return {
+    x: 0, y: 0,
+    ox: o.rx, oy: o.ry,
+    vx: (Math.random() - 0.5) * 0.12,
+    vy: -(0.22 + Math.random() * 0.28),
+    r: 1.2 + Math.random() * 1.8,
+    life: Math.random() * 220,
+    maxLife: 160 + Math.random() * 120,
+    phase: Math.random() * Math.PI * 2,
+    o: o,
+  };
+}
+
+const PARTICLES = ORIGINS.flatMap(o =>
+  Array.from({ length: 5 }, () => mkParticle(o))
+);
+
+function tick() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  PARTICLES.forEach(p => {
+    p.life++;
+    if (p.life >= p.maxLife) {
+      Object.assign(p, mkParticle(p.o));
+      p.x = p.o.rx * canvas.width + (Math.random() - 0.5) * 16;
+      p.y = p.o.ry * canvas.height;
+      return;
+    }
+
+    // Init position
+    if (p.life === 1) {
+      p.x = p.o.rx * canvas.width + (Math.random() - 0.5) * 16;
+      p.y = p.o.ry * canvas.height;
+    }
+
+    const prog  = p.life / p.maxLife;
+    const alpha = Math.sin(prog * Math.PI) * 0.09; // very subtle
+
+    p.x += p.vx + Math.sin(p.life * 0.025 + p.phase) * 0.07;
+    p.y += p.vy;
+    p.r += 0.009;
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    // Warm amber smoke — no blue whatsoever
+    ctx.fillStyle = `rgba(195, 162, 100, ${alpha})`;
+    ctx.fill();
+  });
+
+  requestAnimationFrame(tick);
+}
+tick();
+</script>
+</body>
+</html>

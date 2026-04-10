@@ -1,0 +1,17 @@
+[
+  {
+    "id": "vow_1775614814840",
+    "createdAt": "2026-04-08",
+    "deadline": "2026/05/08",
+    "raw": "blog_daily",
+    "normalized": "blog_daily",
+    "title": "每日一文档",
+    "subGoals": [
+      {
+        "done": false,
+        "completedDates": []
+      }
+    ],
+    "status": "active"
+  }
+]

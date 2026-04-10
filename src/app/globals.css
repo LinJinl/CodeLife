@@ -1,26 +1,275 @@
 @import "tailwindcss";
 
+/* ─── Design Tokens (夜间 / 默认) ────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --font-xiaowei: 'ZCOOL XiaoWei', serif;
+  --font-serif:   'Noto Serif SC', serif;
+  --font-mono:    'JetBrains Mono', monospace;
+
+  --void:         #0A080F;
+  --cave:         #120F0C;
+  --deep:         #1A1612;
+  --surface:      #222018;
+
+  --gold:         #D4A843;
+  --gold-bright:  #E8BE5A;
+  --gold-dim:     #9A7535;
+  --gold-line:    rgba(212, 168, 67, 0.25);
+  --gold-wash:    rgba(212, 168, 67, 0.07);
+
+  --ink:          #D4C8B0;
+  --ink-mid:      #A09080;
+  --ink-dim:      #6E6050;
+  --ink-trace:    #3A3028;
+
+  --seal:         #A03830;
+  --jade:         #4A7D5E;
+
+  /* 导航背景（CSS变量，供 Navigation.tsx 使用） */
+  --nav-bg-top:    linear-gradient(180deg, rgba(4,3,8,0.52) 0%, transparent 100%);
+  --nav-bg-scroll: rgba(10,8,15,0.45);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ─── Design Tokens (白天 · 水墨) ─────────────────────── */
+html[data-theme="light"] {
+  --void:         #F5F0E8;
+  --cave:         #EDE7DA;
+  --deep:         #E4DDD0;
+  --surface:      #D9D0C2;
+
+  --gold:         #A07818;
+  --gold-bright:  #BA8C28;
+  --gold-dim:     #785810;
+  --gold-line:    rgba(130,96,24,0.22);
+  --gold-wash:    rgba(130,96,24,0.06);
+
+  --ink:          #241E14;
+  --ink-mid:      #524638;
+  --ink-dim:      #867A66;
+  --ink-trace:    #C8BCA8;
+
+  --seal:         #8C2820;
+  --jade:         #3A6B4E;
+
+  --nav-bg-top:    linear-gradient(180deg, rgba(242,237,230,0.52) 0%, transparent 100%);
+  --nav-bg-scroll: rgba(237,231,218,0.45);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--void);
+  color: var(--ink);
+  font-family: 'Noto Serif SC', serif;
+  font-weight: 300;
+  min-height: 100vh;
+  overflow-x: hidden;
+  box-sizing: border-box;
+  padding-right: var(--spirit-panel-w, 0px);
+  transition: padding-right 0.3s ease, background 0.5s ease, color 0.5s ease;
 }
+
+/* 山峦（白天配色由 html[data-theme="light"] 覆盖） */
+html[data-theme="light"] .mountain-far  { fill: #A09088 !important; opacity: 0.22; }
+html[data-theme="light"] .mountain-mid  { fill: #807870 !important; opacity: 0.38; }
+html[data-theme="light"] .mountain-near { fill: #5C5450 !important; opacity: 0.55; }
+html[data-theme="light"] .mountain-base { fill: #3A3530 !important; opacity: 0.7; }
+
+/* ─── 全局滚动条（暗色主题）────────────────────────────── */
+::-webkit-scrollbar              { width: 4px; height: 4px; }
+::-webkit-scrollbar-track        { background: transparent; }
+::-webkit-scrollbar-thumb        { background: var(--ink-trace); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover  { background: var(--ink-dim); }
+* { scrollbar-width: thin; scrollbar-color: var(--ink-trace) transparent; }
+
+/* ─── World background ───────────────────────────────── */
+.world {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.world-sky {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg,
+    #04030A 0%, #07050C 30%, #0C0908 65%, #110D0A 100%
+  );
+  transition: background 0.5s ease;
+}
+html[data-theme="light"] .world-sky {
+  background: linear-gradient(180deg,
+    #C8C0B2 0%, #D8D0C4 30%, #E4DCCC 65%, #EDE6D8 100%
+  );
+}
+.world-mountains {
+  position: absolute;
+  bottom: 0; left: 0;
+  width: 100%; height: 72%;
+}
+.mist {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform, opacity;
+}
+.mist-a {
+  width: 85%; height: 38%; left: -12%; top: 36%;
+  background: radial-gradient(ellipse, rgba(158,128,88,0.042) 0%, transparent 65%);
+  filter: blur(36px);
+  animation: drift-a 50s ease-in-out infinite alternate;
+  transition: background 0.5s ease;
+}
+.mist-b {
+  width: 75%; height: 32%; right: -18%; top: 44%;
+  background: radial-gradient(ellipse, rgba(140,112,72,0.036) 0%, transparent 65%);
+  filter: blur(44px);
+  animation: drift-b 65s ease-in-out infinite alternate;
+  transition: background 0.5s ease;
+}
+.mist-c {
+  width: 55%; height: 26%; left: 18%; top: 58%;
+  background: radial-gradient(ellipse, rgba(175,142,95,0.03) 0%, transparent 70%);
+  filter: blur(28px);
+  animation: drift-c 38s ease-in-out infinite alternate;
+  transition: background 0.5s ease;
+}
+html[data-theme="light"] .mist-a {
+  background: radial-gradient(ellipse, rgba(100,80,55,0.055) 0%, transparent 65%);
+}
+html[data-theme="light"] .mist-b {
+  background: radial-gradient(ellipse, rgba(80,62,42,0.045) 0%, transparent 65%);
+}
+html[data-theme="light"] .mist-c {
+  background: radial-gradient(ellipse, rgba(120,95,65,0.04) 0%, transparent 70%);
+}
+@keyframes drift-a {
+  from { transform: translate(0,0);    opacity: 0.55; }
+  to   { transform: translate(3%,-2%); opacity: 0.9;  }
+}
+@keyframes drift-b {
+  from { transform: translate(0,0);    opacity: 0.8; }
+  to   { transform: translate(-4%,2%); opacity: 0.45; }
+}
+@keyframes drift-c {
+  from { transform: translate(0,0);    opacity: 0.5; }
+  to   { transform: translate(2%,-1%); opacity: 0.85; }
+}
+.world-vignette {
+  position: absolute; inset: 0;
+  background: radial-gradient(
+    ellipse 90% 90% at 50% 45%,
+    transparent 25%, rgba(4,3,7,0.55) 100%
+  );
+  transition: background 0.5s ease;
+}
+html[data-theme="light"] .world-vignette {
+  background: radial-gradient(
+    ellipse 90% 90% at 50% 45%,
+    transparent 25%, rgba(180,170,155,0.4) 100%
+  );
+}
+
+/* ─── Page animation ─────────────────────────────────── */
+.page-content {
+  position: relative;
+  z-index: 10;
+  animation: reveal 0.65s ease-out both;
+}
+
+/* ─── 导航栏跟随器灵面板左移 ──────────────────────────── */
+.nav-header {
+  padding-right: var(--spirit-panel-w, 0px) !important;
+}
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Shared components ──────────────────────────────── */
+.ornate { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.ornate-line {
+  flex: 1; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-line));
+}
+.ornate-line.r { background: linear-gradient(270deg, transparent, var(--gold-line)); }
+.ornate-glyph  { color: var(--gold-dim); font-size: 9px; letter-spacing: 4px; }
+
+.section-head  { display: flex; align-items: center; gap: 16px; }
+.section-head-line {
+  flex: 1; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-line));
+}
+.section-head-line.r { background: linear-gradient(270deg, transparent, var(--gold-line)); }
+.section-head-text {
+  font-size: 12px; letter-spacing: 4px; text-indent: 4px;
+  color: var(--ink-dim); white-space: nowrap;
+}
+
+.seal-mark {
+  font-size: 10px; color: var(--seal);
+  border: 1px solid rgba(131,48,40,0.35);
+  padding: 1px 7px; letter-spacing: 2px; text-indent: 2px;
+}
+
+/* ─── Blog prose ─────────────────────────────────────── */
+.prose {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 2.0;
+  color: var(--ink-mid);
+  letter-spacing: 0.5px;
+}
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  font-family: var(--font-xiaowei), serif;
+  color: var(--ink);
+  font-weight: 400;
+  letter-spacing: 4px;
+  margin: 2.4em 0 0.8em;
+  line-height: 1.5;
+}
+.prose h1 { font-size: 1.6em; }
+.prose h2 { font-size: 1.3em; border-bottom: 1px solid var(--ink-trace); padding-bottom: 0.4em; }
+.prose h3 { font-size: 1.1em; }
+.prose p  { margin: 1.2em 0; }
+.prose a  { color: var(--gold-dim); text-decoration: underline; text-decoration-color: var(--gold-line); }
+.prose a:hover { color: var(--gold); }
+.prose strong { color: var(--ink); font-weight: 600; }
+.prose em { font-style: italic; color: var(--ink); }
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--surface);
+  color: var(--gold-dim);
+  padding: 1px 6px;
+  border-radius: 2px;
+}
+.prose pre {
+  background: var(--deep);
+  border: 1px solid var(--ink-trace);
+  padding: 20px 24px;
+  overflow-x: auto;
+  margin: 1.6em 0;
+  border-radius: 2px;
+}
+.prose pre code {
+  background: none;
+  color: var(--ink);
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.prose blockquote {
+  border-left: 2px solid var(--gold-dim);
+  margin: 1.6em 0;
+  padding: 0.4em 0 0.4em 20px;
+  color: var(--ink-dim);
+  font-style: italic;
+}
+.prose ul, .prose ol { padding-left: 1.6em; margin: 1em 0; }
+.prose li { margin: 0.4em 0; }
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--ink-trace);
+  margin: 2.4em 0;
+}
+.prose img { max-width: 100%; opacity: 0.9; margin: 1.6em 0; }

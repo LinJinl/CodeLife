@@ -1,65 +1,123 @@
-import Image from "next/image";
+import { getDashboardData } from '@/lib/data'
 
-export default function Home() {
+export const revalidate = 3600
+
+export default async function HomePage() {
+  const data = await getDashboardData()
+  const { realm, totalPoints, blogCount, lcSolved, ghCommits, streak, recentActivity } = data
+
+  const stats = [
+    { val: totalPoints.toLocaleString(), key: '修　为' },
+    { val: blogCount.toString(),         key: '著　述' },
+    { val: lcSolved.toString(),          key: '铸　剑' },
+    { val: ghCommits.toLocaleString(),   key: '铸　剑' },
+    { val: streak.toString(),            key: '连续不辍' },
+  ]
+
+  const dotColor: Record<string, string> = {
+    blog:    'var(--gold-dim)',
+    github:  'var(--ink-dim)',
+    leetcode:'var(--jade)',
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div>
+      {/* ── Hero ── */}
+      <section style={{
+        minHeight: '100vh',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        textAlign: 'center', padding: '120px 20px 80px',
+      }}>
+        <div style={{ fontFamily: 'var(--font-serif)', fontSize: 10, letterSpacing: 5, color: 'var(--ink-dim)', marginBottom: 32 }}>
+          当前境界
+        </div>
+
+        <div style={{
+          fontFamily: 'var(--font-xiaowei), serif',
+          fontSize: 'clamp(60px, 10vw, 96px)',
+          letterSpacing: 24, textIndent: 24,
+          color: 'var(--gold)', lineHeight: 1,
+          marginBottom: realm.stage ? 14 : 52, opacity: 0.9,
+        }}>
+          {realm.name}
+        </div>
+
+        {realm.stage && (
+          <div style={{
+            fontFamily: 'var(--font-serif)', fontSize: 17,
+            letterSpacing: 12, textIndent: 12,
+            color: 'var(--ink-mid)', marginBottom: 52,
+          }}>
+            {realm.stage.split('').join('　')}
+          </div>
+        )}
+
+        <div className="ornate" style={{ width: 360, margin: '0 auto 48px' }}>
+          <div className="ornate-line r" />
+          <div className="ornate-glyph">◆　◆　◆</div>
+          <div className="ornate-line" />
+        </div>
+
+        <div style={{ display: 'flex', gap: 56, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 40 }}>
+          {stats.map(f => (
+            <div key={f.key} style={{ textAlign: 'center' }}>
+              <div style={{ fontFamily: 'var(--font-serif)', fontSize: 26, color: 'var(--ink)', letterSpacing: 2, marginBottom: 8 }}>
+                {f.val}
+              </div>
+              <div style={{ fontSize: 11, letterSpacing: 4, textIndent: 4, color: 'var(--ink-dim)' }}>{f.key}</div>
+            </div>
+          ))}
+        </div>
+
+        {realm.pointsToNext > 0 && (
+          <div style={{ fontFamily: 'var(--font-serif)', fontSize: 13, color: 'var(--ink-dim)', letterSpacing: 3, lineHeight: 2 }}>
+            距下一境界，尚余{' '}
+            <span style={{ color: 'var(--gold-dim)' }}>{realm.pointsToNext.toLocaleString()}</span>{' '}修为
+          </div>
+        )}
+      </section>
+
+      {/* ── Recent Activity ── */}
+      <section style={{ maxWidth: 620, margin: '0 auto', padding: '0 36px 100px' }}>
+        <div className="section-head" style={{ marginBottom: 40 }}>
+          <div className="section-head-line r" />
+          <div className="section-head-text">近期修炼记录</div>
+          <div className="section-head-line" />
+        </div>
+
+        {recentActivity.length === 0 ? (
+          <p style={{ color: 'var(--ink-dim)', textAlign: 'center', letterSpacing: 3 }}>
+            尚无记录，开始你的修炼之路
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
+        ) : recentActivity.map((item, i) => (
+          <a key={i} href={`/blog/${item.slug}`} style={{
+            display: 'grid',
+            gridTemplateColumns: '52px 6px 1fr auto',
+            gap: '0 14px',
+            alignItems: 'baseline',
+            padding: '14px 0',
+            borderBottom: '1px solid var(--ink-trace)',
+            textDecoration: 'none',
+            cursor: 'pointer',
+          }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-dim)' }}>
+              {new Date(item.dateStr).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace('/', '-')}
+            </div>
+            <div style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: dotColor[item.type] ?? 'var(--ink-dim)',
+              marginTop: 5, alignSelf: 'start',
+            }} />
+            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 14, color: 'var(--ink-mid)', lineHeight: 1.65 }}>
+              著述·<strong style={{ color: 'var(--ink)', fontWeight: 400 }}>《{item.title}》</strong>
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--gold-dim)', opacity: 0.7 }}>
+              {item.points > 0 ? `+${item.points}` : ''}
+            </div>
           </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        ))}
+      </section>
     </div>
-  );
+  )
 }
