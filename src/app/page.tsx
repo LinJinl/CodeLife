@@ -9,7 +9,7 @@ export default async function HomePage() {
   const stats = [
     { val: totalPoints.toLocaleString(), key: '修　为' },
     { val: blogCount.toString(),         key: '著　述' },
-    { val: lcSolved.toString(),          key: '铸　剑' },
+    { val: lcSolved.toString(),          key: '炼　丹' },
     { val: ghCommits.toLocaleString(),   key: '铸　剑' },
     { val: streak.toString(),            key: '连续不辍' },
   ]
