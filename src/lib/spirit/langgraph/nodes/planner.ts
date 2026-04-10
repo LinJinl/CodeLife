@@ -55,22 +55,25 @@ const plannerSchema = z.object({
 })
 
 export async function plannerNode(state: GraphStateType): Promise<Partial<GraphStateType>> {
-  const model  = buildPlannerModel().withStructuredOutput(plannerSchema)
-  const result = await model.invoke([
-    new SystemMessage(PLANNER_SYSTEM_PROMPT),
-    ...state.messages,
-  ])
+  const model = buildPlannerModel().withStructuredOutput(plannerSchema)
 
-  const subtasks: SubTask[] = result.strategy === 'parallel' && result.subtasks
-    ? result.subtasks.map(t => ({
-        id:          t.id,
-        agentId:     t.agentId,
-        description: t.description,
-      }))
-    : []
+  try {
+    const result = await model.invoke([
+      new SystemMessage(PLANNER_SYSTEM_PROMPT),
+      ...state.messages,
+    ])
 
-  return {
-    strategy: result.strategy,
-    subtasks,
+    const subtasks: SubTask[] = result.strategy === 'parallel' && result.subtasks
+      ? result.subtasks.map(t => ({
+          id:          t.id,
+          agentId:     t.agentId,
+          description: t.description,
+        }))
+      : []
+
+    return { strategy: result.strategy, subtasks }
+  } catch {
+    // withStructuredOutput 解析失败，降级为 direct
+    return { strategy: 'direct', subtasks: [] }
   }
 }

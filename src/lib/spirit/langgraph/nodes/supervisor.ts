@@ -32,11 +32,17 @@ const supervisorSchema = z.object({
 })
 
 export async function supervisorNode(state: GraphStateType): Promise<Partial<GraphStateType>> {
-  const model  = buildPlannerModel().withStructuredOutput(supervisorSchema)
-  const result = await model.invoke([
-    new SystemMessage(SUPERVISOR_SYSTEM_PROMPT),
-    ...state.messages,
-  ])
+  const model = buildPlannerModel().withStructuredOutput(supervisorSchema)
 
-  return { next: result.next }
+  try {
+    const result = await model.invoke([
+      new SystemMessage(SUPERVISOR_SYSTEM_PROMPT),
+      ...state.messages,
+    ])
+    return { next: result.next }
+  } catch {
+    // withStructuredOutput 解析失败：模型输出了自然语言而非 JSON
+    // 此时 messages 里已有完整回答，直接 FINISH
+    return { next: 'FINISH' }
+  }
 }

@@ -167,10 +167,11 @@ registerTool({
 
   const entryMap = new Map(entries.map(e => [e.id, e]))
   const matched  = results.map(r => entryMap.get(r.id)).filter(Boolean) as LibraryEntry[]
+  const total    = loadLibraryIndex().length  // 全库总数，供模型准确引用
 
   return {
-    content: JSON.stringify(matched),
-    brief:   `找到 ${matched.length} 篇相关文档（混合检索）`,
+    content: JSON.stringify({ total, matched }),
+    brief:   `藏经阁共 ${total} 篇，本次召回 ${matched.length} 篇相关文档`,
   }
 }, { displayName: '检索藏经阁' })
 
