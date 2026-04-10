@@ -1,11 +1,12 @@
 /**
- * CodeLife 数据工具：让器灵能直接查阅博客、刷题、GitHub 数据
+ * CodeLife 数据工具：让器灵能直接查阅博客、刷题、GitHub 数据、对话历史
  */
 
 import { registerTool }        from '../registry'
 import config                  from '../../../../codelife.config'
 import { createBlogAdapter }   from '../../adapters/blog'
 import { createLeetcodeAdapter } from '../../adapters/leetcode'
+import { getConversation, getRecentConversations } from '../memory'
 
 registerTool({
   name:        'read_user_blogs',
@@ -87,3 +88,81 @@ registerTool({
     brief:   `${realm.name} ${realm.stage}，近30日 ${total} 修为`,
   }
 }, { displayName: '读取修为数据' })
+
+registerTool({
+  name:        'search_conversations',
+  description: '查询历史对话记录。可以按日期查某天的完整对话，也可以用关键词在近期对话中全文搜索。用于回答"我们上次说了什么""上周我提到过什么问题"之类的问题。',
+  parameters: {
+    type: 'object',
+    properties: {
+      date:  {
+        type:        'string',
+        description: '查询指定日期的对话（YYYY-MM-DD），与 query 互斥；若两者都填则优先按日期查',
+      },
+      query: {
+        type:        'string',
+        description: '关键词，在近期对话中全文搜索（不区分大小写）',
+      },
+      days: {
+        type:        'number',
+        description: '搜索最近多少天的记录，默认 14，最大 60',
+      },
+    },
+    required: [],
+  },
+}, async ({ date, query, days = 14 }) => {
+  // ── 按日期精确查 ──────────────────────────────────────────
+  if (date) {
+    const conv = getConversation(date as string)
+    if (conv.messages.length === 0) {
+      return { content: `${date} 无对话记录`, brief: '无记录' }
+    }
+    const text = conv.messages.map(m =>
+      `[${m.timestamp ?? ''}] ${m.role === 'user' ? '修士' : '器灵'}：${m.content}`
+    ).join('\n\n')
+    return {
+      content: text,
+      brief:   `${date} 共 ${conv.messages.length} 条`,
+    }
+  }
+
+  // ── 关键词全文搜索 ────────────────────────────────────────
+  if (query) {
+    const keyword   = (query as string).toLowerCase()
+    const lookback  = Math.min(Number(days), 60)
+    const convs     = getRecentConversations(lookback)
+    const hits: { date: string; role: string; content: string; timestamp: string }[] = []
+
+    for (const conv of convs) {
+      for (const msg of conv.messages) {
+        if (msg.content.toLowerCase().includes(keyword)) {
+          hits.push({
+            date:      conv.date,
+            role:      msg.role === 'user' ? '修士' : '器灵',
+            content:   msg.content.length > 400 ? msg.content.slice(0, 400) + '…' : msg.content,
+            timestamp: msg.timestamp ?? '',
+          })
+        }
+      }
+    }
+
+    if (hits.length === 0) {
+      return { content: `近 ${lookback} 天内未找到包含「${query}」的对话`, brief: '无匹配' }
+    }
+
+    const text = hits.map(h => `[${h.date} ${h.timestamp}] ${h.role}：${h.content}`).join('\n\n---\n\n')
+    return {
+      content: text,
+      brief:   `命中 ${hits.length} 条（近 ${lookback} 天）`,
+    }
+  }
+
+  // ── 两者都不填：返回有记录的日期列表 ─────────────────────
+  const lookback = Math.min(Number(days), 60)
+  const convs    = getRecentConversations(lookback)
+  const summary  = convs.map(c => `${c.date}：${c.messages.length} 条消息`).join('\n')
+  return {
+    content: summary || `近 ${lookback} 天无对话记录`,
+    brief:   `共 ${convs.length} 天有记录`,
+  }
+}, { displayName: '查询对话历史' })

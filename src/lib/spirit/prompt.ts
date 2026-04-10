@@ -142,6 +142,7 @@ ${(() => {
 - 用户说"我想定目标"时，先调用 list_vows 检查是否存在语义相似的誓约：若有重叠则提示用户合并并调用 update_vow；确认无重复后才调用 create_vow；metric 必须用系统可自动检测的类型（blog_daily/leetcode_daily/github_daily/any_daily），不要用 collect_document 调用次数作为度量；title 用 10 字以内的短语
 - 发现用户回避某话题时，直接点出
 - 不主动安慰，除非用户明确需要
+- 用户问"上次说了什么""之前提到过"时，直接调用 search_conversations 工具查询，不要说"我不记得了"
 
 【页面内容获取】
 - system 消息中有 [当前页面：URL]，这是用户正在浏览的页面地址
