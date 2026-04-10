@@ -33,7 +33,12 @@ import type { BlogConfig, CultivationConfig } from '@/lib/config'
 
 const WC_CACHE_FILE = path.resolve(process.cwd(), 'content/blog_wc_cache.json')
 
-interface WcEntry { wordCount: number; lastEdited: string }
+interface WcEntry {
+  wordCount:  number
+  lastEdited: string
+  /** true = 已成功拉取过正文（wordCount=0 表示文章本身为空，不再重试） */
+  fetched?:   boolean
+}
 type WcCache = Record<string, WcEntry>
 
 function loadWcCache(): WcCache {
@@ -183,8 +188,11 @@ export class NotionBlogAdapter implements BlogAdapter {
 
     for (const page of pages) {
       const entry = cache[page.id]
-      // wordCount===0 视为拉取失败的缓存，强制重试
-      if (!entry || entry.lastEdited !== page.last_edited_time || entry.wordCount === 0) {
+      // fetched=true 且 wordCount=0：文章本身为空，不重试
+      // fetched 缺失且 wordCount=0：旧的失败缓存，需重试
+      const stale = !entry || entry.lastEdited !== page.last_edited_time
+      const badCache = entry && entry.wordCount === 0 && !entry.fetched
+      if (stale || badCache) {
         missing.push(page)
       }
     }
@@ -195,8 +203,9 @@ export class NotionBlogAdapter implements BlogAdapter {
         try {
           const mdBlocks = await this.n2m.pageToMarkdown(page.id)
           const content  = this.n2m.toMarkdownString(mdBlocks).parent
-          cache[page.id] = { wordCount: countWords(content), lastEdited: page.last_edited_time }
+          cache[page.id] = { wordCount: countWords(content), lastEdited: page.last_edited_time, fetched: true }
         } catch {
+          // 拉取失败：不写 fetched，下次同步时仍会重试
           cache[page.id] = { wordCount: 0, lastEdited: page.last_edited_time }
         }
       }))
