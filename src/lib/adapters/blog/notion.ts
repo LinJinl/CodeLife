@@ -38,6 +38,8 @@ interface WcEntry {
   lastEdited: string
   /** true = 已成功拉取过正文（wordCount=0 表示文章本身为空，不再重试） */
   fetched?:   boolean
+  /** 完整 Markdown 正文，getPostContentById 优先从此读取，避免重复请求 Notion */
+  content?:   string
 }
 type WcCache = Record<string, WcEntry>
 
@@ -203,7 +205,7 @@ export class NotionBlogAdapter implements BlogAdapter {
         try {
           const mdBlocks = await this.n2m.pageToMarkdown(page.id)
           const content  = this.n2m.toMarkdownString(mdBlocks).parent
-          cache[page.id] = { wordCount: countWords(content), lastEdited: page.last_edited_time, fetched: true }
+          cache[page.id] = { wordCount: countWords(content), lastEdited: page.last_edited_time, fetched: true, content }
         } catch {
           // 拉取失败：不写 fetched，下次同步时仍会重试
           cache[page.id] = { wordCount: 0, lastEdited: page.last_edited_time }
@@ -217,27 +219,43 @@ export class NotionBlogAdapter implements BlogAdapter {
     )
   }
 
-  /** 通过 Notion pageId 直接拉取正文，不重复查询数据库列表 */
+  /** 通过 Notion pageId 获取正文。优先读文件缓存（sync 时已存），缓存缺失才请求 Notion */
   async getPostContentById(pageId: string): Promise<PostContent> {
+    const cache = loadWcCache()
+    const entry = cache[pageId]
+
+    // 文件缓存命中：content 字段存在（包括空字符串，代表已确认为空）
+    if (entry?.fetched && entry.content !== undefined) {
+      const wc = entry.wordCount
+      const { points, label } = calcPoints(wc, this.cult)
+      return {
+        content:        entry.content,
+        excerpt:        entry.content.slice(0, 160).replace(/\n/g, ' ') + (entry.content.length > 160 ? '…' : ''),
+        wordCount:      wc,
+        readingMinutes: Math.max(1, Math.round(wc / 300)),
+        pointsEarned:   points,
+        pointsLabel:    label,
+      }
+    }
+
+    // 缓存缺失：从 Notion 拉取，并写入文件缓存
     const mdBlocks = await this.n2m.pageToMarkdown(pageId)
     const content  = this.n2m.toMarkdownString(mdBlocks).parent
     const wc       = countWords(content)
     const { points, label } = calcPoints(wc, this.cult)
 
-    // 顺便更新字数缓存（保持 getPosts() 的 WC 准确）
     try {
-      const page = await this.notion.pages.retrieve({ page_id: pageId })
+      const page       = await this.notion.pages.retrieve({ page_id: pageId })
       const lastEdited = (page as { last_edited_time: string }).last_edited_time
-      const cache = loadWcCache()
-      cache[pageId] = { wordCount: wc, lastEdited }
+      cache[pageId]    = { wordCount: wc, lastEdited, fetched: true, content }
       saveWcCache(cache)
     } catch {
-      // WC 缓存写失败不影响正文返回
+      // 写缓存失败不影响正文返回，下次仍会重试
     }
 
     return {
       content,
-      excerpt:        content.slice(0, 160).replace(/\n/g, ' ') + '…',
+      excerpt:        content.slice(0, 160).replace(/\n/g, ' ') + (content.length > 160 ? '…' : ''),
       wordCount:      wc,
       readingMinutes: Math.max(1, Math.round(wc / 300)),
       pointsEarned:   points,
