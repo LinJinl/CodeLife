@@ -100,6 +100,17 @@ registerTool({
   const index = loadLibraryIndex()
   index.unshift(entry)
   saveIndex(index)
+
+  // 写入时立刻预索引，避免下次搜索时批量 embed
+  try {
+    const embedder  = makeEmbedder()
+    const text      = [entry.title, entry.summary, entry.tags.join(' '), entry.category].join(' ')
+    const [vec]     = await embedder.embedDocuments([text])
+    const cache     = getLibEmbeddings()
+    cache.push({ id: entry.id, vec })
+    saveLibEmbeddings(cache)
+  } catch { /* embedding 失败不影响收藏本身 */ }
+
   return {
     content: JSON.stringify({ ok: true, entry }),
     brief:   `已收藏「${entry.title}」，标签：${entry.tags.join('、') || '无'}`,

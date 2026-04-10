@@ -94,6 +94,19 @@ function bm25Search(docs: HybridDoc[], query: string, topN: number): { id: strin
   return hits.slice(0, topN).map((h, i) => ({ id: h.id, rank: i }))
 }
 
+// ── Query Embedding Cache（进程级，10 分钟 TTL）────────────────
+
+const _queryCache = new Map<string, { vec: number[]; ts: number }>()
+const QUERY_TTL   = 10 * 60 * 1000
+
+async function cachedQueryEmbed(embedder: Embeddings, query: string): Promise<number[]> {
+  const hit = _queryCache.get(query)
+  if (hit && Date.now() - hit.ts < QUERY_TTL) return hit.vec
+  const vec = await embedder.embedQuery(query)
+  _queryCache.set(query, { vec, ts: Date.now() })
+  return vec
+}
+
 // ── 向量检索 ──────────────────────────────────────────────────
 
 async function vectorSearch(
@@ -118,7 +131,7 @@ async function vectorSearch(
     }
     // 临时合并到本次查询
     const tempMap = new Map(newEntries.map(e => [e.id, e.vec]))
-    const queryVec = await embedder.embedQuery(query)
+    const queryVec = await cachedQueryEmbed(embedder, query)
     return docs
       .map(d => {
         const vec = getCachedVec(d.id) ?? tempMap.get(d.id)

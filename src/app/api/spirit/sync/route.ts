@@ -11,6 +11,7 @@ import {
   updatePersona,
   shouldGenerateWeeklyPattern,
   shouldUpdatePersona,
+  preIndexEmbeddings,
 } from '@/lib/spirit/sync'
 import { buildChatModel }  from '@/lib/spirit/langgraph/agents'
 import { invalidateAgentCache } from '@/lib/spirit/langgraph/agents'
@@ -51,7 +52,18 @@ export async function POST(req: NextRequest) {
       invalidateAgentCache()
     }
 
-    return Response.json({ ok: true, log, weeklyUpdated: shouldGenerateWeeklyPattern(), personaUpdated: shouldUpdatePersona() })
+    // 3. 预热 embedding 索引（后台，失败不影响响应）
+    const indexResult = await preIndexEmbeddings(llm).catch(e => {
+      console.warn('[sync] embedding 预热失败:', e)
+      return { blogNew: 0, convNew: 0 }
+    })
+
+    return Response.json({
+      ok: true, log,
+      weeklyUpdated: shouldGenerateWeeklyPattern(),
+      personaUpdated: shouldUpdatePersona(),
+      indexed: indexResult,
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     return Response.json({ error: message }, { status: 500 })

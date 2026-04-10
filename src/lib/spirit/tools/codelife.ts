@@ -9,6 +9,7 @@ import { createLeetcodeAdapter } from '../../adapters/leetcode'
 import {
   getConversation, getRecentConversations,
   getConvEmbeddings, saveConvEmbeddings,
+  getBlogEmbeddings, saveBlogEmbeddings,
 } from '../memory'
 import { hybridSearch, type HybridDoc } from '../hybrid-search'
 
@@ -92,6 +93,63 @@ registerTool({
     brief:   `${realm.name} ${realm.stage}，近30日 ${total} 修为`,
   }
 }, { displayName: '读取修为数据' })
+
+registerTool({
+  name:        'search_blog_posts',
+  description: '在用户自己写的博客文章中混合检索（BM25 + 语义向量 RRF 融合）。用于"我写过关于…的文章吗""找一下我之前写的 XXX 相关内容"。',
+  parameters: {
+    type: 'object',
+    properties: {
+      query:    { type: 'string', description: '检索描述，自然语言' },
+      category: { type: 'string', description: '先按分类过滤，再检索（可选）' },
+      topK:     { type: 'number', description: '返回数量，默认 5' },
+    },
+    required: ['query'],
+  },
+}, async ({ query, category, topK = 5 }) => {
+  const adapter = createBlogAdapter(config.blog, config.cultivation)
+  let   posts   = await adapter.getPosts()
+  if (category) posts = posts.filter(p => p.category === (category as string))
+  if (posts.length === 0) return { content: '没有找到相关博文', brief: '无结果' }
+
+  const docs: HybridDoc[] = posts.map(p => ({
+    id:   p.slug,
+    text: [p.title, p.excerpt, p.category, p.tags?.join(' ')].filter(Boolean).join(' '),
+  }))
+
+  const cache    = getBlogEmbeddings()
+  const cacheMap = new Map(cache.map(e => [e.id, e.vec]))
+
+  const results = await hybridSearch(docs, query as string, {
+    topK:         Math.min(Number(topK), 10),
+    embedder:     makeEmbedder(),
+    getCachedVec: id => cacheMap.get(id),
+    onNewVecs:    newVecs => {
+      for (const { id, vec } of newVecs) cacheMap.set(id, vec)
+      saveBlogEmbeddings(Array.from(cacheMap.entries()).map(([id, vec]) => ({ id, vec })))
+    },
+  })
+
+  if (results.length === 0) return { content: '没有找到相关博文', brief: '无结果' }
+
+  const postMap = new Map(posts.map(p => [p.slug, p]))
+  const matched = results.map(r => {
+    const p = postMap.get(r.id)!
+    return {
+      title:       p.title,
+      slug:        p.slug,
+      category:    p.category,
+      publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString().slice(0, 10),
+      excerpt:     p.excerpt?.slice(0, 120),
+      wordCount:   p.wordCount,
+    }
+  })
+
+  return {
+    content: JSON.stringify(matched),
+    brief:   `找到 ${matched.length} 篇相关博文`,
+  }
+}, { displayName: '检索博客文章' })
 
 // ── embedding 构建辅助 ────────────────────────────────────────
 

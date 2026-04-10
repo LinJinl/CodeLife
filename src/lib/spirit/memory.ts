@@ -249,6 +249,23 @@ export function saveConvEmbeddings(entries: ConvEmbeddingEntry[]) {
   writeJSON(convEmbeddingsFile, entries)
 }
 
+// ── Blog Embedding Cache ──────────────────────────────────────
+
+const blogEmbeddingsFile = path.join(BASE, 'blog_embeddings.json')
+
+export interface BlogEmbeddingEntry {
+  id:  string   // slug
+  vec: number[]
+}
+
+export function getBlogEmbeddings(): BlogEmbeddingEntry[] {
+  return readJSON<BlogEmbeddingEntry[]>(blogEmbeddingsFile, [])
+}
+
+export function saveBlogEmbeddings(entries: BlogEmbeddingEntry[]) {
+  writeJSON(blogEmbeddingsFile, entries)
+}
+
 // ── Library Embedding Cache ───────────────────────────────────
 
 const libraryEmbeddingsFile = path.join(BASE, 'library', 'embeddings.json')

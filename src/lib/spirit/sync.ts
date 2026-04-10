@@ -18,6 +18,11 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import config                      from '../../../codelife.config'
 import { createBlogAdapter }       from '../adapters/blog'
 import { createLeetcodeAdapter }   from '../adapters/leetcode'
+import {
+  getBlogEmbeddings, saveBlogEmbeddings,
+  getConvEmbeddings, saveConvEmbeddings,
+  getRecentConversations,
+} from './memory'
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10)
@@ -240,6 +245,77 @@ export async function updatePersona(llm: SimpleLLM): Promise<PersonaProfile | nu
   } catch {
     return null
   }
+}
+
+/**
+ * 预热 embedding 索引：博客 + 近期对话
+ * 在 POST /api/spirit/sync 末尾调用，确保下次搜索时文档向量已全部就绪。
+ * 只计算尚未缓存的条目（增量），API 消耗极低。
+ */
+export async function preIndexEmbeddings(llm: SimpleLLM): Promise<{ blogNew: number; convNew: number }> {
+  // SimpleLLM 不是 Embeddings，需要单独构建 embedder
+  // 延迟 import 避免循环依赖
+  const { OpenAIEmbeddings } = await import('@langchain/openai')
+  const embedder = new OpenAIEmbeddings({
+    apiKey:    config.spirit?.apiKey ?? '',
+    modelName: 'text-embedding-3-small',
+    ...(config.spirit?.baseURL ? { configuration: { baseURL: config.spirit.baseURL } } : {}),
+  })
+
+  let blogNew = 0
+  let convNew = 0
+
+  // ── 博客预索引 ────────────────────────────────────────────
+  try {
+    const adapter  = createBlogAdapter(config.blog, config.cultivation)
+    const posts    = await adapter.getPosts()
+    const cache    = getBlogEmbeddings()
+    const cacheMap = new Map(cache.map(e => [e.id, e.vec]))
+    const missing  = posts.filter(p => !cacheMap.has(p.slug))
+
+    if (missing.length > 0) {
+      const texts = missing.map(p =>
+        [p.title, p.excerpt, p.category, p.tags?.join(' ')].filter(Boolean).join(' ')
+      )
+      const vecs = await embedder.embedDocuments(texts)
+      missing.forEach((p, i) => cacheMap.set(p.slug, vecs[i]))
+      saveBlogEmbeddings(Array.from(cacheMap.entries()).map(([id, vec]) => ({ id, vec })))
+      blogNew = missing.length
+    }
+  } catch (e) {
+    console.warn('[preIndex] 博客索引失败:', e)
+  }
+
+  // ── 对话预索引（近 7 天）────────────────────────────────
+  try {
+    const convs    = getRecentConversations(7)
+    const cache    = getConvEmbeddings()
+    const cacheMap = new Map(cache.map(e => [`${e.date}::${e.msgIndex}`, e.vec]))
+
+    const missing: { key: string; date: string; msgIndex: number; role: string; content: string; timestamp: string }[] = []
+    for (const conv of convs) {
+      conv.messages.forEach((msg, idx) => {
+        const key = `${conv.date}::${idx}`
+        if (msg.content.trim() && !cacheMap.has(key)) {
+          missing.push({ key, date: conv.date, msgIndex: idx, role: msg.role, content: msg.content, timestamp: msg.timestamp ?? '' })
+        }
+      })
+    }
+
+    if (missing.length > 0) {
+      const vecs = await embedder.embedDocuments(missing.map(m => m.content))
+      missing.forEach((m, i) => {
+        cacheMap.set(m.key, vecs[i])
+        cache.push({ date: m.date, msgIndex: m.msgIndex, role: m.role as 'user'|'assistant', content: m.content, timestamp: m.timestamp, vec: vecs[i] })
+      })
+      saveConvEmbeddings(cache)
+      convNew = missing.length
+    }
+  } catch (e) {
+    console.warn('[preIndex] 对话索引失败:', e)
+  }
+
+  return { blogNew, convNew }
 }
 
 /** 是否需要本周 pattern 更新（每周一检查上周） */
