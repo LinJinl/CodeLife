@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# LeetCode CN session（含敏感 cookie，不入库）
+content/leetcode_cn_session.txt
+content/leetcode_difficulty_cache.json

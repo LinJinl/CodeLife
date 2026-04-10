@@ -1,5 +1,5 @@
 export type BlogProvider = 'local' | 'notion' | 'ghost'
-export type LeetcodeProvider = 'unofficial' | 'manual'
+export type LeetcodeProvider = 'unofficial' | 'manual' | 'cn'
 
 export interface SiteConfig {
   title: string
@@ -47,6 +47,12 @@ export interface LeetcodeConfig {
   }
   manual?: {
     dataFile: string
+  }
+  cn?: {
+    /** leetcode.cn 登录用户名 */
+    username: string
+    /** leetcode.cn 登录密码（存 .env.local，勿硬编码） */
+    password: string
   }
   revalidate?: number
 }
