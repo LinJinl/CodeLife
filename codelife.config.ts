@@ -89,27 +89,21 @@ export default defineConfig({
   leetcode: {
     enabled: true,
     username: 'YOUR_LEETCODE_USERNAME', // ← 改成你的 LeetCode 用户名（显示用）
-    provider: 'manual',                 // ← 'cn' | 'manual' | 'unofficial'
+    provider: 'cn',                     // 'cn' | 'manual' | 'unofficial'
 
     // ── CN（力扣中文版，账号密码自动登录）──────────────────────
     // .env.local 添加：
     //   LEETCODE_CN_USERNAME=你的用户名
     //   LEETCODE_CN_PASSWORD=你的密码
-    // Session Cookie 自动缓存到 content/leetcode_cn_session.txt
-    // cn: {
-    //   username: process.env.LEETCODE_CN_USERNAME!,
-    //   password: process.env.LEETCODE_CN_PASSWORD!,
-    // },
-
-    // ── unofficial（国际版 leetcode.com）────────────────────────
-    // unofficial: {
-    //   cookie: process.env.LEETCODE_COOKIE,  // 可选，从浏览器 DevTools 复制
-    // },
-
-    // ── manual（本地 YAML 文件）─────────────────────────────────
-    manual: {
-      dataFile: './content/leetcode.yaml',
+    cn: {
+      username: process.env.LEETCODE_CN_USERNAME!,
+      password: process.env.LEETCODE_CN_PASSWORD!,
     },
+
+    // ── manual（历史记录手动补充）────────────────────────────────
+    // manual: {
+    //   dataFile: './content/leetcode.yaml',
+    // },
     revalidate: 86400, // 24 小时
   },
 
