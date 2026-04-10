@@ -70,11 +70,29 @@ class ThinkFilter {
 }
 
 // ── brief 提取（与 tools.ts 中的 BRIEF:: 约定对应） ──────────
+// @langchain/core 1.x 把工具返回值包装成 ToolMessage 对象再发出；
+// 需要先从 ToolMessage.content 取出字符串，再解析 BRIEF:: 前缀。
+
+function extractRawStr(output: unknown): string {
+  if (typeof output === 'string') return output
+  if (output && typeof output === 'object') {
+    const o = output as Record<string, unknown>
+    if (typeof o.content === 'string') return o.content
+    if (Array.isArray(o.content)) {
+      return (o.content as unknown[]).map(c =>
+        typeof c === 'string' ? c :
+        (c && typeof c === 'object' && typeof (c as Record<string, unknown>).text === 'string')
+          ? (c as Record<string, unknown>).text as string : ''
+      ).join('')
+    }
+  }
+  return ''
+}
 
 function extractBrief(output: unknown): string | undefined {
-  if (typeof output !== 'string') return undefined
-  if (output.startsWith('BRIEF::')) {
-    return output.split('\n')[0].slice(7)
+  const raw = extractRawStr(output)
+  if (raw.startsWith('BRIEF::')) {
+    return raw.split('\n')[0].slice(7)
   }
   return undefined
 }
@@ -210,7 +228,7 @@ export async function* translateToSpiritEvents(
     if (event.event === 'on_tool_end') {
       const output  = event.data?.output
       const brief   = extractBrief(output)
-      const rawStr  = typeof output === 'string' ? output : ''
+      const rawStr  = extractRawStr(output)
       const baseStr = rawStr.startsWith('BRIEF::')
         ? rawStr.slice(rawStr.indexOf('\n') + 1)
         : rawStr

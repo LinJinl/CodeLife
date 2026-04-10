@@ -32,7 +32,7 @@ function formatTodayCompact(): string {
   const log   = getDailyLog(today)
   if (!log || log.activities.length === 0) return '今日暂无记录'
   const parts = log.activities.map(a => {
-    const label = { blog: '著述', leetcode: '炼丹', github: '铸剑' }[a.type] ?? a.type
+    const label = { blog: '著述', leetcode: '铸剑', github: '声望' }[a.type] ?? a.type
     return `${label}×${a.count}`
   })
   return `${today}：${parts.join('　')}　连续第 ${log.streakDay} 日　+${log.totalPoints}修为`

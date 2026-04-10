@@ -33,7 +33,8 @@
 
 import { revalidateTag } from 'next/cache'
 import config from '../../../../codelife.config'
-import { createBlogAdapter } from '@/lib/adapters/blog'
+import { createBlogAdapter }     from '@/lib/adapters/blog'
+import { createLeetcodeAdapter } from '@/lib/adapters/leetcode'
 
 const SYNC_SECRET = process.env.SYNC_SECRET ?? ''
 
@@ -75,6 +76,15 @@ export async function GET(request: Request) {
     revalidated.push('github')
   }
   if (source === 'all' || source === 'leetcode') {
+    // 先预热：直接调用 adapter 拉取最新数据，再失效缓存让页面下次渲染时直接命中
+    if (config.leetcode.enabled) {
+      try {
+        const lc = createLeetcodeAdapter(config.leetcode, config.cultivation)
+        await Promise.all([lc.getStats(), lc.getProblems()])
+      } catch {
+        // 失败不中断
+      }
+    }
     revalidateTag('leetcode', 'max')
     revalidated.push('leetcode')
   }

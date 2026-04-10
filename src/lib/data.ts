@@ -31,44 +31,48 @@ const LEETCODE_TTL = config.leetcode.revalidate  ?? 86400
 const BLOG_TTL     = 3600
 
 // ── 带 tag 的缓存包装 ──────────────────────────────────────────
+// 注意：.catch() 必须放在 unstable_cache「外面」，
+// 否则错误会被缓存成 null/[]，导致后续请求永远拿到空数据。
+// unstable_cache 内部 reject 时不会缓存结果，外部 catch 则兜底不让页面崩溃。
+
 const cachedBlogPosts = unstable_cache(
-  () => blog.getPosts().catch(() => []),
+  () => blog.getPosts(),
   ['blog-posts', config.blog.provider],
   { tags: ['blog'], revalidate: BLOG_TTL },
 )
 
 const cachedGithubStats = unstable_cache(
-  () => (github?.getStats() ?? Promise.resolve(null)).catch(() => null),
+  () => github?.getStats() ?? Promise.resolve(null),
   ['github-stats'],
   { tags: ['github'], revalidate: GITHUB_TTL },
 )
 
 const cachedGithubRepos = unstable_cache(
-  () => (github?.getRepos() ?? Promise.resolve([])).catch(() => []),
+  () => github?.getRepos() ?? Promise.resolve([]),
   ['github-repos'],
   { tags: ['github'], revalidate: GITHUB_TTL },
 )
 
 const cachedGithubCommits = unstable_cache(
-  () => (github?.getRecentCommits(30) ?? Promise.resolve([])).catch(() => []),
+  () => github?.getRecentCommits(30) ?? Promise.resolve([]),
   ['github-commits'],
   { tags: ['github'], revalidate: GITHUB_TTL },
 )
 
 const cachedLeetcodeStats = unstable_cache(
-  () => (leetcode?.getStats() ?? Promise.resolve(null)).catch(() => null),
+  () => leetcode?.getStats() ?? Promise.resolve(null),
   ['leetcode-stats'],
   { tags: ['leetcode'], revalidate: LEETCODE_TTL },
 )
 
 const cachedLeetcodeProblems = unstable_cache(
-  () => (leetcode?.getProblems() ?? Promise.resolve([])).catch(() => []),
+  () => leetcode?.getProblems() ?? Promise.resolve([]),
   ['leetcode-problems'],
   { tags: ['leetcode'], revalidate: LEETCODE_TTL },
 )
 
 // ── 公开数据函数 ───────────────────────────────────────────────
-export async function getBlogPosts() { return cachedBlogPosts() }
+export async function getBlogPosts() { return cachedBlogPosts().catch(() => []) }
 
 // 单篇详情：meta 来自已缓存的列表（无额外 Notion 请求），正文按 pageId 单独缓存
 // 注意：不加 .catch()，让 Notion 报错直接抛出而非缓存为 null
@@ -90,12 +94,12 @@ export async function getBlogPost(slug: string) {
   }
 }
 
-export async function getGithubStats()   { return cachedGithubStats() }
-export async function getGithubRepos()   { return cachedGithubRepos() }
-export async function getGithubCommits() { return cachedGithubCommits() }
+export async function getGithubStats()   { return cachedGithubStats().catch(() => null) }
+export async function getGithubRepos()   { return cachedGithubRepos().catch(() => []) }
+export async function getGithubCommits() { return cachedGithubCommits().catch(() => []) }
 
-export async function getLeetcodeStats()    { return cachedLeetcodeStats() }
-export async function getLeetcodeProblems() { return cachedLeetcodeProblems() }
+export async function getLeetcodeStats()    { return cachedLeetcodeStats().catch(() => null) }
+export async function getLeetcodeProblems() { return cachedLeetcodeProblems().catch(() => []) }
 
 export async function getDashboardData() {
   const [posts, lc, gh] = await Promise.all([

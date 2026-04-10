@@ -41,10 +41,10 @@ export default async function LeetcodePage() {
             fontSize: 15, color: 'var(--ink-mid)',
             letterSpacing: 3, lineHeight: 2.4, marginBottom: 56,
           }}>
-            已铸剑题共 <strong style={{ color: 'var(--ink)' }}>{stats.totalSolved} 枚</strong><br/>
-            <span style={{ color: 'var(--seal)' }}>困难</span> {stats.hard} 枚
-            <span style={{ color: 'var(--gold-dim)' }}>中等</span> {stats.medium} 枚
-            <span style={{ color: 'var(--jade)' }}>简单</span> {stats.easy} 枚
+            已铸剑 <strong style={{ color: 'var(--ink)' }}>{stats.totalSolved} 次</strong><br/>
+            <span style={{ color: 'var(--seal)' }}>困难</span> {stats.hard} 次
+            <span style={{ color: 'var(--gold-dim)' }}>中等</span> {stats.medium} 次
+            <span style={{ color: 'var(--jade)' }}>简单</span> {stats.easy} 次
           </div>
         ) : (
           <div style={{ textAlign: 'center', color: 'var(--ink-dim)', letterSpacing: 3, marginBottom: 56, lineHeight: 2 }}>

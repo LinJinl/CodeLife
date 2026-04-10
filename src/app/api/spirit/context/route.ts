@@ -110,7 +110,7 @@ async function buildContext(path: string): Promise<string> {
       `【修士当前状态】`,
       `境界：${data.realm.name}${data.realm.stage ?? ''}`,
       `总修为：${data.totalPoints}`,
-      `著述：${data.blogCount} 篇　炼丹：${data.lcSolved} 题　铸剑：${data.ghCommits} commit`,
+      `著述：${data.blogCount} 篇　铸剑：${data.lcSolved} 次　声望：${data.ghCommits} commit`,
       `连续打卡：${data.streak} 天`,
     ]
     return lines.join('\n')

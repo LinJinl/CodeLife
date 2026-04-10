@@ -109,7 +109,7 @@ registerTool({
   if (lines.length === 1) return { content: '目录为空', brief: '空目录' }
 
   return {
-    content: `BRIEF::${relRoot} 共 ${lines.length - 1} 项\n${lines.join('\n')}`,
+    content: lines.join('\n'),
     brief:   `${relRoot} 共 ${lines.length - 1} 项`,
   }
 }, { displayName: '列出文件' })
@@ -175,7 +175,7 @@ registerTool({
     : `${rel} (${total} 行)`
 
   return {
-    content: `BRIEF::${brief}\n${numbered}`,
+    content: numbered,
     brief,
   }
 }, { displayName: '读取文件' })

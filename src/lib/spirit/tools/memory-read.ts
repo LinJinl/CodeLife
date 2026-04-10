@@ -18,7 +18,7 @@ import {
 
 registerTool({
   name: 'get_daily_logs',
-  description: `获取最近 N 天的修炼日志（博客著述 / LeetCode 炼丹 / GitHub 铸剑活动详情）。
+  description: `获取最近 N 天的修炼日志（博客著述 / LeetCode 铸剑 / GitHub 声望活动详情）。
 
 使用时机：
 - 用户询问具体某天或某段时间的修炼情况
@@ -38,14 +38,14 @@ registerTool({
   const lines = logs.map(log => {
     if (log.activities.length === 0) return `${log.date}：无修炼`
     const parts = log.activities.map(a => {
-      const label  = { blog: '著述', leetcode: '炼丹', github: '铸剑' }[a.type] ?? a.type
+      const label  = { blog: '著述', leetcode: '铸剑', github: '声望' }[a.type] ?? a.type
       const detail = a.titles?.length ? `（${a.titles.join('、')}）` : ''
       return `${label}×${a.count}${detail} +${a.points}修为`
     })
     return `${log.date}：${parts.join('　')}　第${log.streakDay}日　总 +${log.totalPoints}`
   })
   return {
-    content: `BRIEF::近 ${logs.length} 天日志\n${lines.join('\n')}`,
+    content: lines.join('\n'),
     brief:   `近 ${logs.length} 天日志`,
   }
 }, { displayName: '读取修炼日志' })
