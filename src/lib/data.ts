@@ -68,11 +68,15 @@ const cachedLeetcodeProblems = unstable_cache(
 )
 
 // ── 公开数据函数 ───────────────────────────────────────────────
-export async function getBlogPosts()            { return cachedBlogPosts() }
-export async function getBlogPost(slug: string) {
-  const posts = await cachedBlogPosts()
-  return posts.find(p => p.slug === slug) ?? null
-}
+export async function getBlogPosts() { return cachedBlogPosts() }
+
+// 单篇详情走 adapter.getPost()，拿带正文的完整数据
+const cachedBlogPost = unstable_cache(
+  (slug: string) => blog.getPost(slug).catch(() => null),
+  ['blog-post'],
+  { tags: ['blog'], revalidate: BLOG_TTL },
+)
+export async function getBlogPost(slug: string) { return cachedBlogPost(slug) }
 
 export async function getGithubStats()   { return cachedGithubStats() }
 export async function getGithubRepos()   { return cachedGithubRepos() }
