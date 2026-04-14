@@ -43,3 +43,18 @@ next-env.d.ts
 # LeetCode CN session（含敏感 cookie，不入库）
 content/leetcode_cn_session.txt
 content/leetcode_difficulty_cache.json
+
+# 器灵个人数据（隐私，不入库）
+content/spirit/conversations/
+content/spirit/logs/
+content/spirit/patterns/
+content/spirit/summaries/
+content/spirit/preferences.json
+content/spirit/persona.json
+content/spirit/vows.json
+content/spirit/skills/
+content/spirit/blog_posts_cache.json
+content/spirit/blog_embeddings.json
+content/spirit/conv_embeddings.json
+content/spirit/library/
+content/blog_wc_cache.json
