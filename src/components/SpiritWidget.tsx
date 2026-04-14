@@ -528,7 +528,7 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                       letterSpacing: 2, lineHeight: 2,
                     }}>
                       暂无 MCP 法器<br/>
-                      <span style={{ fontSize: 10 }}>在 codelife.config.ts → mcpServers 配置，或用 /install 装载</span>
+                      <span style={{ fontSize: 10 }}>在 codelife.config.ts → mcpServers 配置，或用 /引法器 装载</span>
                     </div>
                   )}
                 </>

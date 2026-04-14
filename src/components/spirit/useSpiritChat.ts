@@ -153,14 +153,14 @@ export function useSpiritChat(open: boolean) {
     if (!raw || loading) return
 
     let freshCtx: { text: string; path: string } | null = null
-    if (raw.includes('/此页')) {
-      raw = raw.replace(/\/此页\s*/g, '').trim()
+    if (raw.includes('/引此页')) {
+      raw = raw.replace(/\/引此页\s*/g, '').trim()
       freshCtx = await loadPageContext()
       if (!raw) { return }
     }
 
-    // /install 命令：动态安装 MCP 包
-    const installMatch = raw.match(/^\/install\s+(.+)$/)
+    // /引法器 命令：动态安装 MCP 包
+    const installMatch = raw.match(/^\/引法器\s+(.+)$/)
     if (installMatch) {
       const pkg = installMatch[1].trim()
       const userMsg: Message = { role: 'user', content: raw, timestamp: new Date().toISOString() }
@@ -411,7 +411,7 @@ export function useSpiritChat(open: boolean) {
     ta.style.height = 'auto'
     ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
     setInput(val)
-    if (val.startsWith('/')) { setCmdMenu(true); setCmdFilter(val.slice(1).toLowerCase()); setCmdIdx(0) }
+    if (val.startsWith('/') && !val.includes(' ')) { setCmdMenu(true); setCmdFilter(val.slice(1).toLowerCase()); setCmdIdx(0) }
     else setCmdMenu(false)
   }
 
@@ -430,14 +430,13 @@ export function useSpiritChat(open: boolean) {
   function selectCmd(cmd?: SlashCommand) {
     if (!cmd) return
     setCmdMenu(false)
-    if (cmd.cmd === '/此页') {
+    if (cmd.cmd === '/引此页') {
       loadPageContext()
-      setInput(prev => prev.replace(/^\/此页\s*/, ''))
+      setInput(prev => prev.replace(/^\/引此页\s*/, ''))
       setTimeout(() => inputRef.current?.focus(), 0)
       return
     }
-    const val = cmd.fill || cmd.cmd
-    setInput(val)
+    setInput(cmd.cmd)
     setTimeout(() => {
       const ta = inputRef.current; if (!ta) return
       ta.style.height = 'auto'
