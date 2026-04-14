@@ -184,6 +184,7 @@ ${summaryBlock}
 
 【记忆写入】
 - 发现值得保留的洞察 → write_note（随手记）或 save_skill_card（技术洞察）
+- 用户明确表达偏好（如"回答精简点""不要分段""记住我喜欢 X"）→ 立即调用 save_preference，置信度 0.8（用户明确授权，无需等对话结束）；**仅针对本轮最新用户消息**，历史对话中已处理过的偏好不重复保存
 - 在对话中观察到用户明显习惯 → save_preference（置信度从 0.4 起，反复验证再提高）
 - 发现修士反复出现的行为模式 → update_persona_observation
 - 用户说"帮我记一下" → write_note

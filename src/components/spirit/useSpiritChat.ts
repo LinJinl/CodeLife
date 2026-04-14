@@ -212,9 +212,10 @@ export function useSpiritChat(open: boolean) {
     setPhase('thinking')
     pendingCards.current = []
 
-    let stepSeq       = 0
+    let stepSeq          = 0
     let curStrategy: string | null = null
-    const pendingTools = new Map<string, string[]>()
+    let replyingPhaseSet = false
+    const pendingTools   = new Map<string, string[]>()
 
     try {
       const ctxMessages = allContexts.map(c => ({
@@ -257,7 +258,7 @@ export function useSpiritChat(open: boolean) {
               updateLastMsg(msg => ({ ...msg, thinking: (msg.thinking ?? '') + ev.chunk }))
               break
             case 'text':
-              setPhase('replying')
+              if (!replyingPhaseSet) { replyingPhaseSet = true; setPhase('replying') }
               setMessages(prev => {
                 const c    = [...prev]
                 const last = c[c.length - 1]

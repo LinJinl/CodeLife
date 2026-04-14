@@ -3,7 +3,7 @@ import { cookies }        from "next/headers"
 import "./globals.css"
 import { WorldBackground } from "@/components/layout/WorldBackground"
 import { Navigation }      from "@/components/layout/Navigation"
-import SpiritWidget        from "@/components/SpiritWidget"
+import { SpiritWidgetGuard } from "@/components/SpiritWidgetGuard"
 import { VowSidebar }      from "@/components/VowSidebar"
 import { config }          from "@/lib/data"
 
@@ -27,7 +27,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=ZCOOL+XiaoWei&family=Noto+Serif+SC:wght@300;400;600&family=JetBrains+Mono:wght@300;400&display=swap"
+          href="https://fonts.googleapis.com/css2?family=ZCOOL+XiaoWei&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;600&family=JetBrains+Mono:wght@300;400&display=swap"
           rel="stylesheet"
         />
       </head>
@@ -39,7 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           {children}
         </main>
         {config.spirit?.enabled && (
-          <SpiritWidget name={config.spirit.name ?? '青霄'} />
+          <SpiritWidgetGuard name={config.spirit.name ?? '青霄'} />
         )}
       </body>
     </html>

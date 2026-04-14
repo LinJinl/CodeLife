@@ -123,7 +123,5 @@ registerTool(
   {
     displayName: '记录用户偏好',
     domain:      'knowledge',
-    requiresApproval: true,
-    approvalSummary:  (args) => `记录偏好：${args.description}（置信度 ${args.confidence}）`,
   },
 )

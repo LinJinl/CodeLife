@@ -41,8 +41,9 @@ const AGENT_PROMPTS: Record<string, string> = {
 export function buildChatModel(modelOverride?: string): ChatOpenAI {
   const spirit = config.spirit!
   return new ChatOpenAI({
-    model:       modelOverride ?? spirit.model ?? 'gpt-4o-mini',
-    streaming:   true,
+    model:      modelOverride ?? spirit.model ?? 'gpt-4o-mini',
+    streaming:  true,
+    maxRetries: 1,   // 默认 6 次退避重试会在 API 抖动时阻塞数分钟
     configuration: {
       apiKey:  spirit.apiKey,
       baseURL: spirit.baseURL,

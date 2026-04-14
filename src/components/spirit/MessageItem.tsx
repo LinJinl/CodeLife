@@ -25,7 +25,7 @@ function LibraryCards({ entries }: { entries: LibraryCard[] }) {
         }}>
           {e.url ? (
             <a href={e.url} target="_blank" rel="noopener noreferrer" style={{
-              fontFamily: 'var(--font-serif)', fontSize: 13,
+              fontFamily: 'var(--font-sans)', fontSize: 13,
               color: 'var(--ink)', letterSpacing: 1, lineHeight: 1.5,
               textDecoration: 'none', borderBottom: '1px solid var(--ink-trace)',
               display: 'inline',
@@ -33,13 +33,13 @@ function LibraryCards({ entries }: { entries: LibraryCard[] }) {
               {e.title}
             </a>
           ) : (
-            <span style={{ fontFamily: 'var(--font-serif)', fontSize: 13, color: 'var(--ink)', letterSpacing: 1 }}>
+            <span style={{ fontFamily: 'var(--font-sans)', fontSize: 13, color: 'var(--ink)', letterSpacing: 1 }}>
               {e.title}
             </span>
           )}
           {e.summary && (
             <div style={{
-              fontFamily: 'var(--font-serif)', fontSize: 11,
+              fontFamily: 'var(--font-sans)', fontSize: 11,
               color: 'var(--ink-dim)', lineHeight: 1.7, margin: '6px 0 8px',
               letterSpacing: 0.3,
             }}>
@@ -48,7 +48,7 @@ function LibraryCards({ entries }: { entries: LibraryCard[] }) {
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <a href="/resources" style={{
-              fontFamily: 'var(--font-serif)', fontSize: 9, letterSpacing: 1,
+              fontFamily: 'var(--font-sans)', fontSize: 9, letterSpacing: 1,
               padding: '1px 6px', border: '1px solid',
               borderColor: categoryColor(e.category),
               color: categoryColor(e.category),
@@ -58,7 +58,7 @@ function LibraryCards({ entries }: { entries: LibraryCard[] }) {
             </a>
             {e.tags.map(tag => (
               <a key={tag} href={`/resources?tag=${encodeURIComponent(tag)}`} style={{
-                fontFamily: 'var(--font-serif)', fontSize: 9, letterSpacing: 1,
+                fontFamily: 'var(--font-sans)', fontSize: 9, letterSpacing: 1,
                 padding: '1px 6px', border: '1px solid var(--ink-trace)',
                 color: 'var(--ink-dim)', textDecoration: 'none',
               }}>
@@ -107,7 +107,7 @@ function SkillCardItem({ card }: { card: SkillCardData }) {
         </span>
       </div>
       <div style={{
-        fontFamily: 'var(--font-serif)',
+        fontFamily: 'var(--font-sans)',
         fontSize: 11,
         color: 'var(--ink-dim)',
         lineHeight: 1.75,
@@ -120,7 +120,7 @@ function SkillCardItem({ card }: { card: SkillCardData }) {
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {card.tags.map(tag => (
             <span key={tag} style={{
-              fontFamily: 'var(--font-serif)',
+              fontFamily: 'var(--font-sans)',
               fontSize: 9,
               letterSpacing: 1,
               padding: '1px 6px',
@@ -184,7 +184,7 @@ function ThinkingBlock({ content, streaming }: { content: string; streaming: boo
         <div style={{
           marginTop: 4, padding: '6px 10px',
           borderLeft: '2px solid var(--ink-trace)',
-          fontFamily: 'var(--font-serif)', fontSize: 11,
+          fontFamily: 'var(--font-sans)', fontSize: 11,
           color: 'var(--ink-dim)', lineHeight: 1.7,
           letterSpacing: 0.3, whiteSpace: 'pre-wrap',
           maxHeight: 240, overflowY: 'auto',
@@ -231,7 +231,7 @@ function PermissionView({
         {headerText}
       </div>
       <div style={{
-        fontFamily: 'var(--font-serif)', fontSize: 12,
+        fontFamily: 'var(--font-sans)', fontSize: 12,
         color: 'var(--ink)', lineHeight: 1.6,
         marginBottom: 10,
       }}>
@@ -243,7 +243,7 @@ function PermissionView({
             key={d}
             onClick={() => onPermission(d)}
             style={{
-              fontFamily: 'var(--font-serif)', fontSize: 10, letterSpacing: 1,
+              fontFamily: 'var(--font-sans)', fontSize: 10, letterSpacing: 1,
               padding: '3px 10px', border: '1px solid',
               borderColor: d === 'deny' ? 'var(--ink-trace)'
                 : d === 'session' ? 'var(--jade)'
@@ -278,7 +278,7 @@ export const MessageItem = memo(function MessageItem({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
         <div style={{
-          fontFamily: 'var(--font-serif)', fontSize: 13,
+          fontFamily: 'var(--font-sans)', fontSize: 13,
           color: 'var(--ink-mid)', lineHeight: 1.7,
           maxWidth: '80%', padding: '7px 12px',
           background: 'var(--surface)', border: '1px solid var(--ink-trace)',
@@ -290,7 +290,7 @@ export const MessageItem = memo(function MessageItem({
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {msg.ctxLabels.map(label => (
               <span key={label} style={{
-                fontFamily: 'var(--font-serif)', fontSize: 9, letterSpacing: 1,
+                fontFamily: 'var(--font-sans)', fontSize: 9, letterSpacing: 1,
                 color: 'var(--jade)', padding: '1px 6px',
                 border: '1px solid rgba(74,125,94,0.3)',
               }}>
@@ -344,7 +344,7 @@ export const MessageItem = memo(function MessageItem({
                 }}>
                   {step.display}
                   {step.done && step.brief && (
-                    <span style={{ color: 'var(--ink-dim)', marginLeft: 6, fontFamily: 'var(--font-serif)', letterSpacing: 0.3 }}>
+                    <span style={{ color: 'var(--ink-dim)', marginLeft: 6, fontFamily: 'var(--font-sans)', letterSpacing: 0.3 }}>
                       {step.brief}
                     </span>
                   )}
@@ -363,7 +363,7 @@ export const MessageItem = memo(function MessageItem({
                     {step.links.map((link, i) => (
                       <a key={i} href={link.url} target="_blank" rel="noopener noreferrer"
                         style={{
-                          fontFamily: 'var(--font-serif)', fontSize: 10,
+                          fontFamily: 'var(--font-sans)', fontSize: 10,
                           color: 'var(--jade)', letterSpacing: 0.3, lineHeight: 1.5,
                           textDecoration: 'none',
                           borderBottom: '1px solid rgba(74,125,94,0.25)',
@@ -389,7 +389,7 @@ export const MessageItem = memo(function MessageItem({
                   animation: `spirit-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
                 }} />
               ))}
-              <span style={{ fontFamily: 'var(--font-serif)', fontSize: 10, color: 'var(--gold-dim)', letterSpacing: 1, opacity: 0.7 }}>
+              <span style={{ fontFamily: 'var(--font-sans)', fontSize: 10, color: 'var(--gold-dim)', letterSpacing: 1, opacity: 0.7 }}>
                 整合中
               </span>
             </div>
@@ -425,7 +425,9 @@ export const MessageItem = memo(function MessageItem({
       {!hideText && (
         <div className="spirit-md">
           {msg.content
-            ? <ReactMarkdown>{msg.content}</ReactMarkdown>
+            ? (streaming
+                ? <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
+                : <ReactMarkdown>{msg.content}</ReactMarkdown>)
             : (!streaming ? <span style={{ color: 'var(--ink-trace)' }}>…</span> : null)
           }
           {streaming && phase === 'replying' && (

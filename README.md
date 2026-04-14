@@ -25,7 +25,7 @@
 
 ## 器灵 · 青霄
 
-点击右下角金色光点，呼唤器灵。
+点击右下角金色光点呼唤器灵；点击头部 `⛶` 按钮进入**专注模式**——全屏沉浸式对话界面，左侧日期侧栏可随时切换历史记录，随时点「收起」退回。
 
 ### 持续成长的记忆
 
@@ -52,7 +52,7 @@
 
 **写操作（需确认）** — 收藏文章到藏经阁、创建/更新誓约、记录技术洞察
 
-**MCP 扩展** — `/install` 命令在运行时动态装载任意 MCP 工具包
+**MCP 扩展** — `/引法器` 命令在运行时动态装载任意 MCP 工具包
 
 ### 自适应多 Agent 架构
 
@@ -277,10 +277,13 @@ CodeLife/
 └── src/
     ├── app/
     │   └── api/spirit/           器灵 API（chat / session / skills / preferences / vows …）
+    ├── app/
+    │   └── spirit/page.tsx       专注模式全屏界面（portal 渲染，日期侧栏 + 历史只读）
     ├── components/
+    │   ├── SpiritWidget.tsx      器灵悬浮面板（问道 / 法器 / 技能 / 偏好 四 Tab）
+    │   ├── SpiritWidgetGuard.tsx 路由守卫，专注模式下隐藏浮层
     │   └── spirit/
-    │       ├── SpiritWidget.tsx  器灵面板（问道 / 法器 / 技能 / 偏好 四 Tab）
-    │       ├── MessageItem.tsx   消息渲染
+    │       ├── MessageItem.tsx   消息渲染（流式 plain-text + 完成后 Markdown）
     │       ├── useSpiritChat.ts  对话状态 Hook
     │       └── types.ts          共享类型 + 斜杠命令
     └── lib/spirit/

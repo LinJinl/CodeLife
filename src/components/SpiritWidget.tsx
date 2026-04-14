@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, memo } from 'react'
+import { useRouter } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
 import { MessageItem } from './spirit/MessageItem'
 import { useSpiritChat } from './spirit/useSpiritChat'
@@ -104,6 +105,7 @@ function defaultWidth() {
 export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
   // SSR 始终 false，hydration 完成后从 localStorage 恢复
   const [open,   setOpen]   = useState(false)
+  const router = useRouter()
   const [panelW, setPanelW] = useState(defaultWidth)
   useEffect(() => { setOpen(localStorage.getItem('spirit-open') === '1') }, [])
 
@@ -406,11 +408,23 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                 )}
               </div>
             </div>
-            <button onClick={() => setOpen(false)} style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: 'var(--ink-dim)', fontSize: 16, padding: '2px 6px', lineHeight: 1,
-              marginLeft: 'auto',
-            }}>×</button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 'auto' }}>
+              <button
+                onClick={() => router.push('/spirit')}
+                title="专注模式"
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--ink-dim)', fontSize: 13, padding: '2px 6px', lineHeight: 1,
+                  opacity: 0.6, transition: 'opacity 0.15s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}
+              >⛶</button>
+              <button onClick={() => setOpen(false)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--ink-dim)', fontSize: 16, padding: '2px 6px', lineHeight: 1,
+              }}>×</button>
+            </div>
           </div>
 
           {/* ── Tab 栏 ── */}
@@ -1590,43 +1604,6 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
         }
         @keyframes spin { to{transform:rotate(360deg);} }
 
-        .spirit-md { font-family: var(--font-serif); font-size: 13px; color: var(--ink); line-height: 1.85; }
-        .spirit-md p { margin: 0.45em 0; }
-        .spirit-md p:first-child { margin-top: 0; }
-        .spirit-md p:last-child  { margin-bottom: 0; }
-        .spirit-md h1,.spirit-md h2,.spirit-md h3 {
-          color: var(--ink); font-weight: 500; letter-spacing: 1px;
-          margin: 1em 0 0.35em; line-height: 1.4;
-        }
-        .spirit-md h1 { font-size: 15px; }
-        .spirit-md h2 { font-size: 14px; border-bottom: 1px solid var(--ink-trace); padding-bottom: 0.2em; }
-        .spirit-md h3 { font-size: 13px; color: var(--ink-mid); }
-        .spirit-md ul,.spirit-md ol { padding-left: 1.4em; margin: 0.4em 0; }
-        .spirit-md li { margin: 0.2em 0; }
-        .spirit-md strong { color: var(--ink); font-weight: 600; }
-        .spirit-md em { color: var(--ink-mid); font-style: italic; }
-        .spirit-md a { color: var(--gold-dim); text-decoration: underline; }
-        .spirit-md code {
-          font-family: var(--font-mono); font-size: 11px;
-          background: var(--surface); color: var(--gold-dim);
-          padding: 1px 4px; border-radius: 2px;
-        }
-        .spirit-md pre {
-          background: var(--deep); border: 1px solid var(--ink-trace);
-          padding: 10px 14px; overflow-x: auto; margin: 0.6em 0; border-radius: 2px;
-        }
-        .spirit-md pre code {
-          background: none; color: var(--ink); padding: 0;
-          font-size: 11px; line-height: 1.6;
-        }
-        .spirit-md blockquote {
-          border-left: 2px solid var(--gold-dim); margin: 0.6em 0;
-          padding: 0.1em 0 0.1em 12px; color: var(--ink-dim);
-        }
-        .spirit-md hr { border: none; border-top: 1px solid var(--ink-trace); margin: 0.8em 0; }
-        .spirit-md table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 0.6em 0; }
-        .spirit-md th,.spirit-md td { border: 1px solid var(--ink-trace); padding: 4px 8px; text-align: left; }
-        .spirit-md th { color: var(--ink); background: var(--deep); }
       `}</style>
     </>
   )
