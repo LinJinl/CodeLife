@@ -46,8 +46,8 @@ html[data-theme="light"] {
 
   --ink:          #241E14;
   --ink-mid:      #524638;
-  --ink-dim:      #867A66;
-  --ink-trace:    #C8BCA8;
+  --ink-dim:      #5C4E3E;
+  --ink-trace:    #9A8878;
 
   --seal:         #8C2820;
   --jade:         #3A6B4E;
@@ -71,11 +71,6 @@ body {
   transition: padding-right 0.3s ease, background 0.5s ease, color 0.5s ease;
 }
 
-/* 山峦（白天配色由 html[data-theme="light"] 覆盖） */
-html[data-theme="light"] .mountain-far  { fill: #A09088 !important; opacity: 0.22; }
-html[data-theme="light"] .mountain-mid  { fill: #807870 !important; opacity: 0.38; }
-html[data-theme="light"] .mountain-near { fill: #5C5450 !important; opacity: 0.55; }
-html[data-theme="light"] .mountain-base { fill: #3A3530 !important; opacity: 0.7; }
 
 /* ─── 全局滚动条（暗色主题）────────────────────────────── */
 ::-webkit-scrollbar              { width: 4px; height: 4px; }
@@ -108,10 +103,15 @@ html[data-theme="light"] .world-sky {
   bottom: 0; left: 0;
   width: 100%; height: 72%;
 }
+/* 日间山峦：暖棕浅色，不遮挡文字 */
+html[data-theme="light"] .mountain-far  { fill: #B8A898; opacity: 0.35; }
+html[data-theme="light"] .mountain-mid  { fill: #A09080; opacity: 0.45; }
+html[data-theme="light"] .mountain-near { fill: #887868; opacity: 0.55; }
+html[data-theme="light"] .mountain-base { fill: #706050; opacity: 0.65; }
 .mist {
   position: absolute;
   border-radius: 50%;
-  will-change: transform, opacity;
+  will-change: transform;
 }
 .mist-a {
   width: 85%; height: 38%; left: -12%; top: 36%;
@@ -171,10 +171,13 @@ html[data-theme="light"] .world-vignette {
 }
 
 /* ─── Page animation ─────────────────────────────────── */
+/* opacity:0 作为默认值，forwards fill 只保留 opacity:1，不保留 transform，
+   避免 translateY(0) 永久驻留导致 .page-content 被提升为 GPU 合成层 */
 .page-content {
   position: relative;
   z-index: 10;
-  animation: reveal 0.65s ease-out both;
+  opacity: 0;
+  animation: reveal 0.65s ease-out forwards;
 }
 
 /* ─── 导航栏跟随器灵面板左移 ──────────────────────────── */
@@ -182,8 +185,8 @@ html[data-theme="light"] .world-vignette {
   padding-right: var(--spirit-panel-w, 0px) !important;
 }
 @keyframes reveal {
-  from { opacity: 0; transform: translateY(14px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { transform: translateY(14px); }
+  to   { opacity: 1; }
 }
 
 /* ─── Spirit markdown ────────────────────────────────── */
