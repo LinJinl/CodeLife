@@ -99,7 +99,7 @@ export function inferExtraDomains(userMessage: string): ToolDomain[] {
   if (/搜索|搜一下|搜集|查一下|查查|找.*资料|相关资料|最新|网上|在线|网页|链接|url|http|google|bing|了解一下|学习资料/.test(text)) {
     extra.push('web')
   }
-  if (/藏经阁|收藏|书单|资料库|文档库|collect/.test(text)) {
+  if (/藏经|收藏|书单|资料库|文档库|collect/.test(text)) {
     extra.push('library')
   }
   if (/文件|目录|代码|项目|shell|执行|命令|ls |cat |git |npm |run |脚本/.test(text)) {

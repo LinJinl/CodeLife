@@ -97,7 +97,9 @@ export function useSpiritChat(open: boolean) {
     })
       .then(r => r.json())
       .then((data: { ok?: boolean }) => {
-        if (data.ok) send('已确认，请继续执行')
+        if (data.ok) send('已确认，请继续执行', [
+          { content: `[用户已授权，批准令牌：${token}。请将此令牌作为 approval_token 参数传入待执行的写操作工具，不要修改令牌值。]` },
+        ])
         else         send('确认请求失败，请重试')
       })
       .catch(() => send('确认请求失败，请重试'))
@@ -105,8 +107,14 @@ export function useSpiritChat(open: boolean) {
   }, [])
 
   function resolveContent(raw: string): string {
-    const matched = SLASH_COMMANDS.find(c => c.cmd === raw.trim())
-    return matched ? (matched.fill || matched.cmd) : raw
+    const trimmed = raw.trim()
+    // 完全匹配（用户直接选命令后回车）
+    const matched = SLASH_COMMANDS.find(c => c.cmd === trimmed)
+    if (matched) return matched.fill || matched.cmd
+    // 前缀匹配（"/藏经 URL" → "帮我收藏这篇文章：URL"）
+    const prefix = SLASH_COMMANDS.find(c => trimmed.startsWith(c.cmd + ' '))
+    if (prefix?.fill) return prefix.fill + trimmed.slice(prefix.cmd.length).trim()
+    return raw
   }
 
   async function loadPageContext(path = pathname): Promise<{ text: string; path: string } | null> {
@@ -162,7 +170,7 @@ export function useSpiritChat(open: boolean) {
     } catch { /* ignore */ }
   }
 
-  async function send(text?: string) {
+  async function send(text?: string, extraSystemMsgs?: { content: string }[]) {
     let raw = (text ?? input).trim()
     if (!raw || loading) return
 
@@ -243,6 +251,7 @@ export function useSpiritChat(open: boolean) {
         body: JSON.stringify({
           messages: [
             { role: 'system', content: `[当前页面：${typeof window !== 'undefined' ? window.location.href : pathname}]` },
+            ...(extraSystemMsgs ?? []).map(m => ({ role: 'system' as const, content: m.content })),
             ...ctxMessages,
             ...history.map((m, i) => ({
               role: m.role,
