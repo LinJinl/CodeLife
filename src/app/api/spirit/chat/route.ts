@@ -85,28 +85,34 @@ export async function POST(req: NextRequest) {
   const model     = buildChatModel(spirit.model)
   const useAIDomains = !agentId || agentId === 'auto'
 
-  const [, extraDomains] = await Promise.all([
-    needSync ? syncToday().catch(() => {}) : Promise.resolve(),
-    useAIDomains ? inferDomainsWithAI(lastUserText, model) : Promise.resolve([]),
-  ])
-
-  // quickClassify：规则判断是否需要 Planner（Issue 4）
-  const usePlanner = useAIDomains
-    ? quickClassify(langchainMessages) === 'plan'
-    : false
-
-  const domains = useAIDomains ? getQingxiaoDomains(extraDomains as ToolDomain[]) : undefined
-  console.log(`[spirit] chat request: usePlanner=${usePlanner} msgs=${langchainMessages.length} domains=${domains?.join(',') ?? 'debug'} "${msgPreview}"`)
-
-  const graph          = getCompiledGraph(agentId, domains)
-  const recursionLimit = getRecursionLimit(DEFAULT_PARALLEL)
-  const encoder        = new TextEncoder()
+  const encoder = new TextEncoder()
 
   const readable = new ReadableStream({
     async start(ctrl) {
       const push = (data: string) => ctrl.enqueue(encoder.encode(data))
 
       try {
+        // 发初始化事件，让前端立即显示"准备中"状态
+        push(encodeEvent({ type: 'tool_start', name: '__init__', display: '准备中', desc: undefined }))
+
+        const [, extraDomains] = await Promise.all([
+          needSync ? syncToday().catch(() => {}) : Promise.resolve(),
+          useAIDomains ? inferDomainsWithAI(lastUserText, model) : Promise.resolve([]),
+        ])
+
+        push(encodeEvent({ type: 'tool_done', name: '__init__' }))
+
+        // quickClassify：规则判断是否需要 Planner（Issue 4）
+        const usePlanner = useAIDomains
+          ? quickClassify(langchainMessages) === 'plan'
+          : false
+
+        const domains = useAIDomains ? getQingxiaoDomains(extraDomains as ToolDomain[]) : undefined
+        console.log(`[spirit] chat request: usePlanner=${usePlanner} msgs=${langchainMessages.length} domains=${domains?.join(',') ?? 'debug'} "${msgPreview}"`)
+
+        const graph          = getCompiledGraph(agentId, domains)
+        const recursionLimit = getRecursionLimit(DEFAULT_PARALLEL)
+
         const eventStream = graph.streamEvents(
           { messages: langchainMessages, usePlanner },
           { version: 'v2', recursionLimit },

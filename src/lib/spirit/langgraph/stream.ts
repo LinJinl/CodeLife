@@ -153,6 +153,11 @@ export async function* translateToSpiritEvents(
   for await (const event of eventStream) {
     const nodeName = event.metadata?.langgraph_node as string | undefined
 
+    // ── Planner 开始 → 告知用户正在规划 ────────────────────
+    if (event.event === 'on_chain_start' && nodeName === 'planner') {
+      yield { type: 'tool_start', name: '__planner__', display: '规划中', desc: undefined }
+    }
+
     // ── Planner 完成 → emit strategy 事件 ───────────────────
     if (
       event.event === 'on_chain_end' &&
@@ -166,6 +171,7 @@ export async function* translateToSpiritEvents(
         const subtasks = (output?.subtasks as unknown[]) ?? []
         strategyEmitted = true
         console.log(`[spirit] strategy=${mode} tasks=${subtasks.length}`)
+        yield { type: 'tool_done', name: '__planner__', brief: mode === 'direct' ? undefined : `${mode}` }
         yield { type: 'strategy', mode, taskCount: subtasks.length || undefined }
       }
     }

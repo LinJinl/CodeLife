@@ -278,7 +278,14 @@ export function useSpiritChat(open: boolean) {
               break
             case 'strategy':
               curStrategy = ev.mode
-              updateLastMsg(msg => ({ ...msg, strategy: ev.mode }))
+              updateLastMsg(msg => ({
+                ...msg,
+                strategy: ev.mode,
+                // direct 策略时移除 planner 占位 step，不在最终结果里显示
+                steps: ev.mode === 'direct'
+                  ? (msg.steps ?? []).filter(s => s.display !== '规划中')
+                  : msg.steps,
+              }))
               break
             case 'task_start':
               updateLastMsg(msg => ({
@@ -298,7 +305,22 @@ export function useSpiritChat(open: boolean) {
               }))
               break
             case 'tool_start':
-              if (curStrategy !== 'parallel') {
+              if (ev.name === '__init__' || ev.name === '__planner__') {
+                // 虚拟工具：__init__ 只设 phase，不加 step；__planner__ 加 step
+                setPhase('tooling')
+                if (ev.name === '__planner__') {
+                  const sid = `t${stepSeq++}`
+                  if (!pendingTools.has(ev.name)) pendingTools.set(ev.name, [])
+                  pendingTools.get(ev.name)!.push(sid)
+                  updateLastMsg(msg => ({
+                    ...msg,
+                    steps: [...(msg.steps ?? []), {
+                      id: sid, type: 'tool', display: ev.display,
+                      desc: ev.desc, done: false,
+                    }],
+                  }))
+                }
+              } else if (curStrategy !== 'parallel') {
                 setPhase('tooling')
                 const sid = `t${stepSeq++}`
                 if (!pendingTools.has(ev.name)) pendingTools.set(ev.name, [])
@@ -313,7 +335,20 @@ export function useSpiritChat(open: boolean) {
               }
               break
             case 'tool_done':
-              if (curStrategy !== 'parallel') {
+              if (ev.name === '__init__') {
+                // 不做任何事，只是等待结束
+              } else if (ev.name === '__planner__') {
+                const ids = pendingTools.get(ev.name)
+                const sid = ids?.shift()
+                if (sid) {
+                  updateLastMsg(msg => ({
+                    ...msg,
+                    steps: (msg.steps ?? []).map(s =>
+                      s.id === sid ? { ...s, done: true, brief: ev.brief, links: ev.links } : s
+                    ),
+                  }))
+                }
+              } else if (curStrategy !== 'parallel') {
                 const ids = pendingTools.get(ev.name)
                 const sid = ids?.shift()
                 if (sid) {
