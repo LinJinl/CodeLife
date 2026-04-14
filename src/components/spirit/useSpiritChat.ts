@@ -39,9 +39,11 @@ export function useSpiritChat(open: boolean) {
       .catch(() => {})
   }, [open])
 
+  // 流式输出时用 instant，避免 smooth scroll 被反复中断造成抖动
+  // 流式结束后 loading 变 false，再 smooth 滚到底
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, phase])
+    bottomRef.current?.scrollIntoView({ behavior: loading ? 'instant' : 'smooth' })
+  }, [messages, phase, loading])
 
   const saveSession = useCallback((msgs: Message[]) => {
     if (!msgs.length) return

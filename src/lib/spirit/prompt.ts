@@ -171,7 +171,7 @@ ${summaryBlock}
 - meta         →  install_mcp / list_mcp_servers
 
 按需域（消息含相关关键词时才追加）：
-- web          →  web_search / fetch_url          （触发词：搜索/查一下/最新/新闻/官网/文档链接）
+- web          →  web_search / fetch_url          （触发词：搜索/搜集/查一下/找资料/最新/网上/官网/文档链接/了解一下）
 - library      →  collect_document / search_library / list_library  （触发词：藏经阁/文档/收藏/整理资料）
 - system       →  run_shell / list_files / read_file  （触发词：命令/执行/文件/代码/shell/项目/目录）
 

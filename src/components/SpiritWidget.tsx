@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { MessageItem } from './spirit/MessageItem'
 import { useSpiritChat } from './spirit/useSpiritChat'
@@ -38,6 +38,61 @@ function dateLabel(date: string): string {
   const [, m, d] = date.split('-')
   return `${parseInt(m)}/${parseInt(d)}`
 }
+
+// ── 消息列表（memo 隔离，避免 SSE 每个片段都触发整个 SpiritWidget 重渲染）──
+const ChatMessageList = memo(function ChatMessageList({
+  messages, isToday, loading, phase, pastLoading, bottomRef, onPermission,
+}: {
+  messages:    import('./spirit/types').Message[]
+  isToday:     boolean
+  loading:     boolean
+  phase:       'idle' | 'thinking' | 'tooling' | 'replying'
+  pastLoading: boolean
+  bottomRef:   React.RefObject<HTMLDivElement | null>
+  onPermission: (msgIdx: number, decision: 'once' | 'session' | 'deny', token: string) => void
+}) {
+  return (
+    <>
+      {pastLoading && (
+        <div style={{
+          textAlign: 'center', paddingTop: 48,
+          fontFamily: 'var(--font-serif)', fontSize: 12,
+          color: 'var(--ink-trace)', letterSpacing: 2,
+        }}>
+          读取中…
+        </div>
+      )}
+      {!pastLoading && messages.length === 0 && (
+        <div style={{
+          fontFamily: 'var(--font-serif)', fontSize: 13, color: 'var(--ink-dim)',
+          letterSpacing: 2, textAlign: 'center', marginTop: 72, lineHeight: 3,
+        }}>
+          {isToday ? (
+            <>器灵在此<br/>
+              <span style={{ fontSize: 10, color: 'var(--ink-trace)', letterSpacing: 1 }}>输入 / 查看快捷命令</span>
+            </>
+          ) : (
+            <span style={{ fontSize: 11, color: 'var(--ink-trace)' }}>当日无记录</span>
+          )}
+        </div>
+      )}
+      {!pastLoading && messages.map((msg, i) => (
+        <div key={msg.timestamp + i} style={{ marginBottom: 18 }}>
+          <MessageItem
+            msg={msg}
+            isLast={isToday && i === messages.length - 1}
+            loading={isToday && loading}
+            phase={isToday ? phase : 'idle'}
+            onPermission={isToday && msg.role === 'assistant' && msg.permissionRequest && !msg.permissionRequest.resolved
+              ? (d) => onPermission(i, d, msg.permissionRequest!.token)
+              : undefined}
+          />
+        </div>
+      ))}
+      <div ref={bottomRef} />
+    </>
+  )
+})
 
 const MIN_W       = 300
 const MAX_W_RATIO = 0.65
@@ -1381,45 +1436,15 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
           {/* ── 消息区（仅问道 tab）── */}
           {activeTab === 'chat' && (
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px' }}>
-              {pastLoading && (
-                <div style={{
-                  textAlign: 'center', paddingTop: 48,
-                  fontFamily: 'var(--font-serif)', fontSize: 12,
-                  color: 'var(--ink-trace)', letterSpacing: 2,
-                }}>
-                  读取中…
-                </div>
-              )}
-              {!pastLoading && displayMessages.length === 0 && (
-                <div style={{
-                  fontFamily: 'var(--font-serif)', fontSize: 13, color: 'var(--ink-dim)',
-                  letterSpacing: 2, textAlign: 'center', marginTop: 72, lineHeight: 3,
-                }}>
-                  {isToday ? (
-                    <>器灵在此<br/>
-                      <span style={{ fontSize: 10, color: 'var(--ink-trace)', letterSpacing: 1 }}>输入 / 查看快捷命令</span>
-                    </>
-                  ) : (
-                    <span style={{ fontSize: 11, color: 'var(--ink-trace)' }}>当日无记录</span>
-                  )}
-                </div>
-              )}
-
-              {!pastLoading && displayMessages.map((msg, i) => (
-                <div key={i} style={{ marginBottom: 18 }}>
-                  <MessageItem
-                    msg={msg}
-                    isLast={isToday && i === displayMessages.length - 1}
-                    loading={isToday && loading}
-                    phase={isToday ? phase : 'idle'}
-                    onPermission={isToday && msg.role === 'assistant' && msg.permissionRequest && !msg.permissionRequest.resolved
-                      ? (d) => handlePermission(i, d, msg.permissionRequest!.token)
-                      : undefined}
-                  />
-                </div>
-              ))}
-
-              <div ref={bottomRef} />
+              <ChatMessageList
+                messages={displayMessages}
+                isToday={isToday}
+                loading={loading}
+                phase={phase}
+                pastLoading={pastLoading}
+                bottomRef={bottomRef}
+                onPermission={handlePermission}
+              />
             </div>
           )}
 

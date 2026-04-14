@@ -8,6 +8,8 @@
 
 import { DynamicStructuredTool } from '@langchain/core/tools'
 import { z }                      from 'zod'
+import { HumanMessage, SystemMessage } from '@langchain/core/messages'
+import type { ChatOpenAI }        from '@langchain/openai'
 // 注册所有工具（副作用 import）
 import '../tools/index'
 import {
@@ -31,43 +33,81 @@ const QINGXIAO_DEFAULT_DOMAINS: ToolDomain[] = [
   'cultivation', 'memory', 'vow', 'knowledge', 'meta',
 ]
 
+// ── AI 域分类器 ────────────────────────────────────────────────
+
+const DOMAIN_SCHEMA = z.object({
+  domains: z.array(z.enum(['web', 'library', 'system'])).describe(
+    '需要追加的工具域列表，只填实际需要的'
+  ),
+})
+
+const CLASSIFIER_SYSTEM = `你是工具域路由器。根据用户消息，判断需要追加哪些工具域。
+
+可选域：
+- web：联网搜索外部信息、抓取网页、找文档/教程/资料、了解某个技术/工具/概念
+- library：操作藏经阁（收藏文章、搜已收藏内容）
+- system：读写文件、浏览目录、执行 shell 命令、操作代码库
+
+规则：
+- 只加明确需要的域，不确定则不加
+- 问本地数据（博客/修为/刷题/誓约等）不需要任何额外域
+- 聊天、分析、建议不需要额外域
+
+只输出 JSON，不输出其他内容。`
+
 /**
- * 根据用户消息内容推断需要追加的域（纯规则，无 LLM 调用）
- *
- * 策略：宁可多加（功能完整）也不要少加（AI 看不见工具无法决策）。
- * web 和 system 通常是「按需追加」的大头。
+ * 用 LLM 判断需要追加哪些工具域。
+ * 与 syncToday 并行调用，不增加额外延迟。
+ * 若 LLM 调用失败，回退到规则推断。
+ */
+export async function inferDomainsWithAI(
+  userMessage: string,
+  model: ChatOpenAI,
+): Promise<ToolDomain[]> {
+  if (!userMessage.trim()) return []
+  try {
+    const classifier = model.withStructuredOutput(DOMAIN_SCHEMA)
+    const result = await classifier.invoke([
+      new SystemMessage(CLASSIFIER_SYSTEM),
+      new HumanMessage(userMessage.slice(0, 400)),   // 截断，分类不需要全文
+    ])
+    return result.domains as ToolDomain[]
+  } catch (err) {
+    // 降级到规则推断，不影响主流程
+    console.warn('[spirit] domain classifier failed, fallback to rules:', err instanceof Error ? err.message : err)
+    return inferExtraDomains(userMessage)
+  }
+}
+
+/**
+ * 规则推断（fallback / 无 LLM 时使用）
  */
 export function inferExtraDomains(userMessage: string): ToolDomain[] {
   const extra: ToolDomain[] = []
   const text = userMessage.toLowerCase()
 
-  // web：搜索、查最新信息、抓页面
-  if (/搜索|搜一下|查一下|查查|最新|网上|在线|网页|链接|url|http|google|bing/.test(text)) {
+  if (/搜索|搜一下|搜集|查一下|查查|找.*资料|相关资料|最新|网上|在线|网页|链接|url|http|google|bing|了解一下|学习资料/.test(text)) {
     extra.push('web')
   }
-
-  // library：藏经阁、收藏、书单
   if (/藏经阁|收藏|书单|资料库|文档库|collect/.test(text)) {
     extra.push('library')
   }
-
-  // system：文件操作、代码库、shell
   if (/文件|目录|代码|项目|shell|执行|命令|ls |cat |git |npm |run |脚本/.test(text)) {
     extra.push('system')
   }
-
   return extra
 }
 
-export function getQingxiaoDomains(userMessage?: string): ToolDomain[] {
+export function getQingxiaoDomains(extraDomains?: ToolDomain[]): ToolDomain[] {
   const domains = [...QINGXIAO_DEFAULT_DOMAINS]
-  if (userMessage) {
-    for (const d of inferExtraDomains(userMessage)) {
+  if (extraDomains) {
+    for (const d of extraDomains) {
       if (!domains.includes(d)) domains.push(d)
     }
   }
   return domains
 }
+
 
 // ── JSON Schema → Zod 转换（覆盖现有工具的参数类型） ────────────
 

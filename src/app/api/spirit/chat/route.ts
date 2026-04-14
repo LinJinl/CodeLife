@@ -19,7 +19,8 @@ import { getCompiledGraph, getRecursionLimit } from '@/lib/spirit/langgraph/grap
 import { getDailyLog, getConversation }        from '@/lib/spirit/memory'
 import { syncToday }           from '@/lib/spirit/sync'
 import { quickClassify }       from '@/lib/spirit/langgraph/classify'
-import { getQingxiaoDomains }  from '@/lib/spirit/langgraph/tools'
+import { getQingxiaoDomains, inferDomainsWithAI, type ToolDomain } from '@/lib/spirit/langgraph/tools'
+import { buildChatModel }      from '@/lib/spirit/langgraph/agents'
 // recursionLimit 在 planner 解析出并行任务数后才能精确计算，
 // 这里保守地用最大值（5 个并行任务）
 const DEFAULT_PARALLEL = 5
@@ -63,9 +64,6 @@ export async function POST(req: NextRequest) {
 
   // 今日 DailyLog 不存在则先同步（保证记忆有数据）
   const today = new Date().toISOString().slice(0, 10)
-  if (!getDailyLog(today)) {
-    try { await syncToday() } catch { /* 数据源未配置时跳过 */ }
-  }
 
   // 把前端消息历史转换为 LangChain BaseMessage
   const currentMsgs = messages.map(m => {
@@ -78,20 +76,27 @@ export async function POST(req: NextRequest) {
   const todayHistory      = loadTodayHistory(messages)
   const langchainMessages = [...todayHistory, ...currentMsgs]
 
-  // quickClassify：规则判断是否需要 Planner（Issue 4）
-  // agentId 指定时走调试直通图，不受此影响
-  const usePlanner = !agentId || agentId === 'auto'
-    ? quickClassify(langchainMessages) === 'plan'
-    : false
-
   const lastUserMsg  = langchainMessages.findLast(m => m._getType() === 'human')
   const lastUserText = (typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '')
   const msgPreview   = lastUserText.slice(0, 80)
-  console.log(`[spirit] chat request: usePlanner=${usePlanner} msgs=${langchainMessages.length} "${msgPreview}"`)
 
-  // 推断本次请求需要的工具域（直通调试图时不需要）
-  const domains = (!agentId || agentId === 'auto') ? getQingxiaoDomains(lastUserText) : undefined
-  if (domains) console.log(`[spirit] domains: ${domains.join(', ')}`)
+  // 同步今日日志 + AI 域分类 并行跑，不互相阻塞
+  const needSync  = !getDailyLog(today)
+  const model     = buildChatModel(spirit.model)
+  const useAIDomains = !agentId || agentId === 'auto'
+
+  const [, extraDomains] = await Promise.all([
+    needSync ? syncToday().catch(() => {}) : Promise.resolve(),
+    useAIDomains ? inferDomainsWithAI(lastUserText, model) : Promise.resolve([]),
+  ])
+
+  // quickClassify：规则判断是否需要 Planner（Issue 4）
+  const usePlanner = useAIDomains
+    ? quickClassify(langchainMessages) === 'plan'
+    : false
+
+  const domains = useAIDomains ? getQingxiaoDomains(extraDomains as ToolDomain[]) : undefined
+  console.log(`[spirit] chat request: usePlanner=${usePlanner} msgs=${langchainMessages.length} domains=${domains?.join(',') ?? 'debug'} "${msgPreview}"`)
 
   const graph          = getCompiledGraph(agentId, domains)
   const recursionLimit = getRecursionLimit(DEFAULT_PARALLEL)
