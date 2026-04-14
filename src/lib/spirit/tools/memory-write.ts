@@ -53,7 +53,7 @@ registerTool({
     content: `已记录到 ${today} 笔记`,
     brief:   '笔记已追加',
   }
-}, { displayName: '写入笔记' })
+}, { displayName: '写入笔记', domain: 'knowledge' })
 
 // ── update_persona_observation ────────────────────────────────
 
@@ -102,7 +102,7 @@ registerTool({
     content: `人格档案已更新（${type}：${obs}）`,
     brief:   '档案已更新',
   }
-}, { displayName: '更新人格档案' })
+}, { displayName: '更新人格档案', domain: 'memory' })
 
 // ── save_skill_card ───────────────────────────────────────────
 
@@ -126,11 +126,10 @@ registerTool({
     required: ['title', 'insight'],
   },
 }, async ({ title, insight, tags = [] }) => {
-  const cards = getSkills()
-  const now   = new Date().toISOString().slice(0, 10)
-  const id    = `skill_${now.replace(/-/g, '')}_${String(cards.length + 1).padStart(3, '0')}`
-
-  cards.push({
+  const cards  = getSkills()
+  const now    = new Date().toISOString().slice(0, 10)
+  const id     = `skill_${now.replace(/-/g, '')}_${String(cards.length + 1).padStart(3, '0')}`
+  const newCard = {
     id,
     title:      title as string,
     insight:    insight as string,
@@ -138,10 +137,13 @@ registerTool({
     sourceDate: now,
     createdAt:  new Date().toISOString(),
     useCount:   0,
-  })
-  saveSkills(cards)
-  return {
-    content: `技能卡「${title}」已保存（共 ${cards.length} 张）`,
-    brief:   `技能卡已保存`,
   }
-}, { displayName: '保存技能卡' })
+
+  cards.push(newCard)
+  saveSkills(cards)
+  // content 为 JSON，供 stream.ts 解析并推送 skill_card 事件到前端
+  return {
+    content: JSON.stringify(newCard),
+    brief:   `技能卡「${title}」已保存`,
+  }
+}, { displayName: '保存技能卡', domain: 'knowledge' })

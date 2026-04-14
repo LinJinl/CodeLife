@@ -17,20 +17,27 @@ interface ExecutorInput {
 export async function executorNode(state: ExecutorInput) {
   const agent = getAgentById(state.subtask.agentId)
 
-  const result = await agent.invoke({
-    messages: [
-      ...state.messages,
-      new HumanMessage(state.subtask.description),
-    ],
-  })
+  try {
+    const result = await agent.invoke({
+      messages: [
+        ...state.messages,
+        new HumanMessage(state.subtask.description),
+      ],
+    })
 
-  const lastMsg = result.messages.at(-1)
-  const content = typeof lastMsg?.content === 'string'
-    ? lastMsg.content
-    : JSON.stringify(lastMsg?.content ?? '')
+    const lastMsg = result.messages.at(-1)
+    const content = typeof lastMsg?.content === 'string'
+      ? lastMsg.content
+      : JSON.stringify(lastMsg?.content ?? '')
 
-  // 返回值通过父 GraphState 的 subtaskResults reducer 合并
-  return {
-    subtaskResults: { [state.subtask.id]: content },
+    // 返回值通过父 GraphState 的 subtaskResults reducer 合并
+    return {
+      subtaskResults: { [state.subtask.id]: content },
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return {
+      subtaskResults: { [state.subtask.id]: `子任务执行失败：${msg}` },
+    }
   }
 }

@@ -48,7 +48,7 @@ registerTool({
     content: lines.join('\n'),
     brief:   `近 ${logs.length} 天日志`,
   }
-}, { displayName: '读取修炼日志' })
+}, { displayName: '读取修炼日志', domain: 'memory' })
 
 // ── get_weekly_patterns ───────────────────────────────────────
 
@@ -78,7 +78,7 @@ registerTool({
     content: `BRIEF::近 ${patterns.length} 周规律\n${lines.join('\n\n')}`,
     brief:   `近 ${patterns.length} 周规律`,
   }
-}, { displayName: '读取周规律' })
+}, { displayName: '读取周规律', domain: 'memory' })
 
 // ── get_skill_cards ───────────────────────────────────────────
 
@@ -102,4 +102,4 @@ registerTool({
     content: `BRIEF::共 ${skills.length} 张技能卡\n${lines.join('\n\n')}`,
     brief:   `共 ${skills.length} 张技能卡`,
   }
-}, { displayName: '读取技能卡' })
+}, { displayName: '读取技能卡', domain: 'memory' })

@@ -44,12 +44,16 @@ export interface PersonaProfile {
 }
 
 /**
- * metric 约定（自动检测用）：
+ * metric 约定：
  *   blog_daily     — 当日 DailyLog 中有 blog 活动
  *   leetcode_daily — 当日 DailyLog 中有 leetcode 活动
  *   github_daily   — 当日 DailyLog 中有 github 活动
  *   any_daily      — 当日有任何活动
  *   manual         — 只能手动标记
+ *   count_total    — 累计完成次数达到 target（activityType 指定类型）
+ *   count_weekly   — 每周完成次数达到 target（activityType 指定类型）
+ *   streak_N       — 连续 target 天不间断（activityType 指定类型）
+ *   reach_points   — 修为累计达到 target
  */
 export type VowMetric =
   | 'blog_daily'
@@ -57,24 +61,55 @@ export type VowMetric =
   | 'github_daily'
   | 'any_daily'
   | 'manual'
+  | 'count_total'
+  | 'count_weekly'
+  | 'streak_N'
+  | 'reach_points'
 
 export interface VowSubGoal {
-  description:    string
-  metric:         VowMetric
-  done:           boolean       // 一次性目标用
-  completedDates: string[]      // 每日目标用，存 "YYYY-MM-DD"
+  description:      string
+  metric:           VowMetric
+  target?:          number                   // 目标值（count_total/streak_N/reach_points 用）
+  currentCount?:    number                   // 累计计数（count_total/count_weekly 用）
+  weeklyLog?:       Record<string, number>   // weekStart → 当周计数（count_weekly 用）
+  activityType?:    'blog' | 'leetcode' | 'github' | 'any'  // count_* / streak_N 用
+  lastCountedDate?: string                   // 防重复计数（YYYY-MM-DD）
+  done:             boolean                  // 一次性目标是否完成
+  completedDates:   string[]                 // daily / streak_N 已完成日期
 }
 
 export interface Vow {
-  id:         string
-  createdAt:  string
-  deadline:   string
-  raw:        string
-  normalized: string
-  title:      string            // 简短标题，显示在侧边栏
-  subGoals:   VowSubGoal[]
-  status:     'active' | 'fulfilled' | 'broken' | 'expired'
-  verdict?:   string
+  id:          string
+  createdAt:   string
+  deadline:    string
+  raw:         string
+  normalized:  string
+  title:       string            // 简短标题，显示在侧边栏
+  subGoals:    VowSubGoal[]
+  status:      'active' | 'fulfilled' | 'broken' | 'expired' | 'paused'
+  verdict?:    string
+  graceCount?: number            // 允许失败次数（daily 型）
+  graceUsed?:  number            // 已用宽限次数
+  motivation?: string            // 立誓动机
+  tags?:       string[]          // 分类标签
+}
+
+/** 向后兼容：读取旧格式 vow，补全新字段默认值 */
+export function migrateVow(raw: Record<string, unknown>): Vow {
+  return {
+    ...raw,
+    status:     (raw.status     ?? 'active') as Vow['status'],
+    graceCount: (raw.graceCount ?? 0)        as number,
+    graceUsed:  (raw.graceUsed  ?? 0)        as number,
+    tags:       (raw.tags       ?? [])       as string[],
+    subGoals:   ((raw.subGoals ?? []) as Record<string, unknown>[]).map(g => ({
+      ...g,
+      currentCount:    (g.currentCount    ?? 0)  as number,
+      weeklyLog:       (g.weeklyLog       ?? {}) as Record<string, number>,
+      done:            (g.done            ?? false) as boolean,
+      completedDates:  (g.completedDates  ?? [])  as string[],
+    })),
+  } as Vow
 }
 
 // ── 路径工具 ──────────────────────────────────────────────────
@@ -180,7 +215,8 @@ export function savePersona(persona: PersonaProfile) {
 // ── Vows ──────────────────────────────────────────────────────
 
 export function getVows(): Vow[] {
-  return readJSON<Vow[]>(vowsFile, [])
+  const raw = readJSON<Record<string, unknown>[]>(vowsFile, [])
+  return raw.map(migrateVow)
 }
 
 export function saveVows(vows: Vow[]) {
@@ -189,6 +225,47 @@ export function saveVows(vows: Vow[]) {
 
 export function getActiveVows(): Vow[] {
   return getVows().filter(v => v.status === 'active')
+}
+
+// ── Vow Helper Functions ──────────────────────────────────────
+
+/** 返回本周一（UTC+8 日历日期）的 YYYY-MM-DD */
+export function getWeekStart(dateStr?: string): string {
+  // 转为 Asia/Shanghai 的字符串，再 parse 成本地日期对象用于日历计算
+  const ref     = dateStr ? new Date(dateStr + 'T00:00:00+08:00') : new Date()
+  const utc8str = ref.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })
+  const d       = new Date(utc8str)
+  const day     = d.getDay() || 7  // 1=Mon … 7=Sun
+  d.setDate(d.getDate() - day + 1)
+  // 用本地字段拼接，避免 toISOString() 偏移回 UTC 导致日期错位
+  const y  = d.getFullYear()
+  const m  = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+
+/** 近 90 天总修为（reach_points 用） */
+export function getCumulativePoints(): number {
+  return getRecentDailyLogs(90).reduce((s, l) => s + l.totalPoints, 0)
+}
+
+/**
+ * 计算 completedDates 中从"最近已有记录日期"往前连续的天数。
+ * 如果今天也在其中则从今天开始算；否则从最近已记录日往前算。
+ */
+export function calcVowStreak(dates: string[]): number {
+  if (dates.length === 0) return 0
+  const set = new Set(dates)
+  const today = new Date().toISOString().slice(0, 10)
+  // 从今天或最近一天往前数
+  const start = set.has(today) ? today : [...dates].sort().pop()!
+  let streak = 0
+  const d = new Date(start + 'T00:00:00Z')
+  while (set.has(d.toISOString().slice(0, 10))) {
+    streak++
+    d.setUTCDate(d.getUTCDate() - 1)
+  }
+  return streak
 }
 
 // ── Conversations ─────────────────────────────────────────────
@@ -320,13 +397,16 @@ export function upsertVow(vow: Vow) {
 
 /** 从对话中提炼的可复用知识洞察，每周生成一次 */
 export interface SkillCard {
-  id:         string    // skill_YYYYMMDD_NNN
-  title:      string    // 简短标题（≤20字）
-  insight:    string    // 完整知识洞察（2-4句）
-  tags:       string[]
-  sourceDate: string    // 哪天对话提炼的
-  createdAt:  string
-  useCount:   number
+  id:          string    // skill_YYYYMMDD_NNN
+  title:       string    // 简短标题（≤20字）
+  insight:     string    // 一句话摘要，用于列表预览和 prompt 注入
+  body?:       string    // 完整 markdown 内容（结构化的 skill 文档）
+  tags:        string[]
+  sourceDate:  string    // 哪天对话提炼的
+  createdAt:   string
+  useCount:    number
+  userNotes?:  string    // 用户的想法、修正或补充，纳入下次提炼上下文
+  editedAt?:   string    // 最后一次人工编辑时间
 }
 
 const skillsDir        = path.join(BASE, 'skills')
@@ -354,6 +434,37 @@ export function getSkillEmbeddings(): SkillEmbeddingEntry[] {
 export function saveSkillEmbeddings(entries: SkillEmbeddingEntry[]) {
   ensureDir(skillsDir)
   writeJSON(skillsEmbFile, entries)
+}
+
+// ── Preference ────────────────────────────────────────────────
+
+/**
+ * 用户偏好画像条目
+ * 与技能卡不同：这里存储的是对"这个人是谁"的观察，每次提炼是 update-in-place，
+ * 而非追加。置信度随观测次数持续收敛。
+ */
+export type PreferenceCategory = 'learning' | 'technical' | 'communication' | 'work'
+
+export interface Preference {
+  id:               string                // pref_YYYYMMDD_NNN
+  category:         PreferenceCategory
+  key:              string                // snake_case 标识，如 "prefers_code_first"
+  description:      string               // 具体的习惯描述
+  confidence:       number               // 0-1，随观测增加
+  evidence:         string[]             // 观测到的日期列表
+  counterEvidence?: string               // 反例描述（置信度低时）
+  lastSeen:         string               // YYYY-MM-DD，最近一次被观测到
+  updatedAt:        string               // ISO，最后一次更新时间
+}
+
+const preferencesFile = path.join(BASE, 'preferences.json')
+
+export function getPreferences(): Preference[] {
+  return readJSON<Preference[]>(preferencesFile, [])
+}
+
+export function savePreferences(prefs: Preference[]) {
+  writeJSON(preferencesFile, prefs)
 }
 
 // ── SessionSummary ────────────────────────────────────────────

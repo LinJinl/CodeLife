@@ -21,41 +21,60 @@ import { cosine } from './hybrid-search'
 const skillSchema = z.object({
   skills: z.array(z.object({
     title:   z.string(),
-    insight: z.string(),
+    insight: z.string(),    // 一句话摘要，≤50字
+    body:    z.string(),    // 完整 markdown skill 文档
     tags:    z.array(z.string()),
-  })).max(10),
+  })).max(5),
 })
 
-const EXTRACT_SYSTEM = `你是一个知识管理助手，负责从对话记录中提炼可复用的知识洞察。
+const EXTRACT_SYSTEM = `你是一个高标准的技术知识管理助手，负责从对话中提炼真正有价值的 Skill 文档。
 
-每条洞察需要满足：
-- 对未来类似问题有参考价值（不是一次性的闲聊）
-- title：≤20字，概括核心要点
-- insight：2-4句话，说清楚发现了什么、解决了什么问题、结论是什么
-- tags：2-4个，技术领域或主题标签
+【筛选标准——极为严格，宁缺毋滥】
+只提炼满足以下任一条件的内容：
+- 解决了有深度的技术问题（有清晰的根因分析 + 解决方案）
+- 整理了某个领域/工具的完整使用规律、核心概念或最佳实践
+- 总结了学习方法论、架构设计思路或决策原则
+- 记录了一个值得反复参考的系统性认知
 
-类型举例：
-- 解决了某个技术 bug 的根因和方法
-- 发现了用户的学习偏好或习惯
-- 整理了某个领域的学习路线
-- 记录了某个工具/库的使用规律
+【不要提炼的内容】
+- 简单查询、闲聊、一句话问答
+- 显而易见的常识
+- 对话中只是顺带一提、没有展开讨论的点
+- 已有 Skill 的重复
+
+【每条 Skill 格式要求】
+- title：≤20字，准确概括核心知识点
+- insight：一句话摘要（≤50字），用于列表预览，说清楚"这篇 skill 解决什么问题"
+- body：完整的 markdown 文档，要求：
+  * 有结构：用 ## 二级标题分节（背景/问题/核心概念/方案/注意事项/总结 等）
+  * 有深度：不只是结论，要有分析过程、原理说明
+  * 有实用性：包含具体步骤、代码示例或决策框架
+  * 长度：500-1500 字，视内容复杂度决定
+  * 语言：中文，技术术语保持英文
+- tags：2-5个，精准的技术领域或主题标签
+
+⚠️ 如果对话中没有满足标准的内容，直接返回 {"skills": []}，不要凑数。
 
 必须返回 JSON，不输出其他内容。`
 
 // ── 主函数 ────────────────────────────────────────────────────
 
+export interface ExtractResult {
+  cards:    SkillCard[]  // 合并后的完整列表
+  newCount: number       // 本次新增数量（0 = 无新洞察）
+}
+
 /**
  * 分析最近 days 天的对话，提炼新 SkillCard 并合并到现有列表。
- * 返回合并后的完整列表。
  */
 export async function extractSkills(
   days: number,
   model: ChatOpenAI,
-): Promise<SkillCard[]> {
+): Promise<ExtractResult> {
   const existing = getSkills()
   const convs    = getRecentConversations(days)
 
-  if (convs.length === 0) return existing
+  if (convs.length === 0) return { cards: existing, newCount: 0 }
 
   // 组装对话文本（每条消息最多 400 字，总量限制 8000 字）
   let totalChars = 0
@@ -76,14 +95,21 @@ export async function extractSkills(
   const transcript     = lines.join('\n')
   const existingTitles = existing.map(s => s.title).join('、') || '无'
 
+  // 有用户注记的卡片：提炼时作为重要参考
+  const cardsWithNotes = existing.filter(s => s.userNotes?.trim())
+  const notesContext   = cardsWithNotes.length > 0
+    ? '\n\n用户对已有洞察的想法（请在提炼时参考）：\n' +
+      cardsWithNotes.map(s => `- 「${s.title}」：${s.userNotes}`).join('\n')
+    : ''
+
   try {
     const llm    = model.withStructuredOutput(skillSchema)
     const result = await llm.invoke([
       new SystemMessage(EXTRACT_SYSTEM),
       new HumanMessage(
-        `已有洞察（避免重复）：${existingTitles}\n\n` +
+        `已有洞察（避免重复）：${existingTitles}${notesContext}\n\n` +
         `以下是最近 ${days} 天的对话记录：\n\n${transcript}\n\n` +
-        `请提炼3-8条新的知识洞察（不包含已有的）。`
+        `请提炼新的知识洞察（不包含已有的）。若无值得保留的新洞察，返回空数组。`
       ),
     ])
 
@@ -92,6 +118,7 @@ export async function extractSkills(
       id:         `skill_${today.replace(/-/g, '')}_${String(i + 1).padStart(3, '0')}`,
       title:      s.title,
       insight:    s.insight,
+      body:       s.body,
       tags:       s.tags,
       sourceDate: today,
       createdAt:  new Date().toISOString(),
@@ -101,11 +128,11 @@ export async function extractSkills(
     const deduped = await deduplicateSkills(newCards, existing)
     const merged  = [...existing, ...deduped]
 
-    saveSkills(merged)
-    return merged
+    if (deduped.length > 0) saveSkills(merged)
+    return { cards: merged, newCount: deduped.length }
   } catch (err) {
     console.warn('[skill-extractor] extractSkills failed:', err)
-    return existing
+    return { cards: existing, newCount: 0 }
   }
 }
 

@@ -112,7 +112,7 @@ registerTool({
     content: lines.join('\n'),
     brief:   `${relRoot} 共 ${lines.length - 1} 项`,
   }
-}, { displayName: '列出文件' })
+}, { displayName: '列出文件', domain: 'system' })
 
 // ── read_file ─────────────────────────────────────────────────
 
@@ -178,4 +178,4 @@ registerTool({
     content: numbered,
     brief,
   }
-}, { displayName: '读取文件' })
+}, { displayName: '读取文件', domain: 'system' })

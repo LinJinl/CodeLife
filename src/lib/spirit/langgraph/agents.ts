@@ -9,7 +9,8 @@ import { ChatOpenAI }         from '@langchain/openai'
 import { SystemMessage }      from '@langchain/core/messages'
 import config                 from '../../../../codelife.config'
 import { buildSystemPrompt }  from '../prompt'
-import { getLangChainToolsFor, AGENT_DISPLAY } from './tools'
+import { getLangChainToolsFor, getQingxiaoDomains, type ToolDomain } from './tools'
+import { AGENT_DISPLAY, type AgentId } from './agent-config'
 
 // ── 专项 Agent 的 System Prompt ────────────────────────────────
 
@@ -57,10 +58,12 @@ export function buildPlannerModel(): ChatOpenAI {
 
 // ── 创建各 Agent（createReactAgent subgraph） ─────────────────
 
-export function createQingxiaoAgent() {
+export function createQingxiaoAgent(domains?: ToolDomain[]) {
+  const resolvedDomains = domains ?? getQingxiaoDomains()
+  const tools           = getLangChainToolsFor('qingxiao', resolvedDomains)
   return createReactAgent({
-    llm:    buildChatModel(),
-    tools:  getLangChainToolsFor('qingxiao'),
+    llm:   buildChatModel(),
+    tools,
     // 每次 Agent 调用时重新读取记忆文件，保证内容最新
     messageModifier: (messages) => [new SystemMessage(buildSystemPrompt()), ...messages],
   })
@@ -93,9 +96,20 @@ export function createPlannerAgent() {
   })
 }
 
-// ── 懒加载单例（executor 节点复用） ──────────────────────────
+// ── 专项 Agent 工厂注册表（单一来源，供 graph.ts / executor 共用） ──
 
 type CompiledAgent = ReturnType<typeof createQingxiaoAgent>
+
+/** AgentId → 工厂函数。graph.ts 用它动态建图，executor 用它按需创建 agent */
+export const SPECIALIST_AGENTS: Record<AgentId, () => CompiledAgent> = {
+  qingxiao:      createQingxiaoAgent,
+  search_agent:  createSearchAgent,
+  code_agent:    createCodeAgent,
+  planner_agent: createPlannerAgent,
+}
+
+// ── 懒加载单例（executor 节点复用） ──────────────────────────
+
 const _agentCache = new Map<string, CompiledAgent>()
 
 /**
@@ -108,11 +122,9 @@ export function invalidateAgentCache() {
 
 export function getAgentById(agentId: string): CompiledAgent {
   if (!_agentCache.has(agentId)) {
-    const agent = agentId === 'search_agent'  ? createSearchAgent()
-      : agentId === 'code_agent'              ? createCodeAgent()
-      : agentId === 'planner_agent'           ? createPlannerAgent()
-      : createQingxiaoAgent()
-    _agentCache.set(agentId, agent)
+    const factory = (SPECIALIST_AGENTS as Record<string, (() => CompiledAgent) | undefined>)[agentId]
+      ?? createQingxiaoAgent
+    _agentCache.set(agentId, factory())
   }
   return _agentCache.get(agentId)!
 }

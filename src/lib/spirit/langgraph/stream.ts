@@ -120,6 +120,8 @@ function describeToolInput(name: string, input: unknown): string | undefined {
     case 'read_file':            return typeof a.path  === 'string' ? a.path : undefined
     case 'write_note':           return typeof a.content === 'string' ? a.content.slice(0, 40) : undefined
     case 'save_skill_card':      return typeof a.title   === 'string' ? a.title : undefined
+    case 'list_skills':          return typeof a.tag    === 'string' ? `标签「${a.tag}」` : '所有'
+    case 'delete_skill':         return typeof a.id     === 'string' ? a.id : undefined
     default: {
       // MCP 工具或其他：取第一个字符串参数
       const first = Object.values(a).find(v => typeof v === 'string')
@@ -200,7 +202,7 @@ export async function* translateToSpiritEvents(
       !activeAgents.has(nodeName)
     ) {
       activeAgents.add(nodeName)
-      yield { type: 'agent_start', agent: nodeName, display: AGENT_DISPLAY[nodeName] }
+      yield { type: 'agent_start', agent: nodeName, display: AGENT_DISPLAY[nodeName] ?? nodeName }
     }
 
     // ── Agent 退出 ────────────────────────────────────────────
@@ -262,15 +264,38 @@ export async function* translateToSpiritEvents(
       console.log(`[spirit] tool_done: ${event.name}${brief ? ` → ${brief}` : ''}${links ? ` [${links.length} links]` : ''}`)
       yield { type: 'tool_done', name: event.name, brief, links }
       if (baseStr.startsWith('PERMISSION_REQUIRED::')) {
-        // 格式：PERMISSION_REQUIRED::token::level::cmd::workdir
-        const parts = baseStr.split('::')
+        // 格式（shell）：PERMISSION_REQUIRED::token::level::cmd::workdir
+        // 格式（write）：PERMISSION_REQUIRED::token::write::summary::
+        // 注意：cmd 内部可能含 "::"，故用 slice+join 而非简单 split
+        const parts   = baseStr.split('::')
+        const token   = parts[1] ?? ''
+        const level   = parts[2] ?? 'moderate'
+        // cmd = 第3段到倒数第2段（含中间所有 ::），workdir = 最后一段
+        const workdir = parts[parts.length - 1] ?? ''
+        const command = parts.slice(3, -1).join('::')
         yield {
           type:    'permission_request',
-          token:   parts[1] ?? '',
-          level:   (parts[2] ?? 'moderate') as 'moderate' | 'destructive',
-          command: parts[3] ?? '',
-          workdir: parts[4] ?? '',
+          token,
+          level:   level as 'moderate' | 'destructive' | 'write',
+          command,
+          workdir,
         }
+      }
+
+      // 技能卡工具 → 推送结构化卡片
+      if (event.name === 'save_skill_card') {
+        try {
+          const card = JSON.parse(baseStr)
+          if (card && card.id) yield { type: 'skill_card', card }
+        } catch { /* ignore */ }
+      }
+      if (event.name === 'list_skills') {
+        try {
+          const cards = JSON.parse(baseStr)
+          if (Array.isArray(cards) && cards.length > 0) {
+            yield { type: 'skill_cards', entries: cards }
+          }
+        } catch { /* ignore */ }
       }
 
       // 藏经阁工具 → 推送结构化卡片

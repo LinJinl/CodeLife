@@ -46,7 +46,11 @@ export async function POST(req: NextRequest) {
       tasks.push(updatePersona(llm).catch(e => console.warn('[sync] persona 更新失败:', e)))
     }
     if (shouldExtractSkills()) {
-      tasks.push(extractSkills(14, llm).catch(e => console.warn('[sync] 技能提炼失败:', e)))
+      tasks.push(
+        extractSkills(14, llm)
+          .then(r => console.log(`[sync] 技能提炼完成，新增 ${r.newCount} 张`))
+          .catch(e => console.warn('[sync] 技能提炼失败:', e))
+      )
     }
 
     // 等待周期任务（通常很快，模型返回 JSON 即可）

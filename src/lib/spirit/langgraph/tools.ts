@@ -15,7 +15,59 @@ import {
   getRegisteredTool,
   callTool,
   isToolVisibleToAgent,
+  isToolInDomains,
+  type ToolDomain,
 }                                 from '../registry'
+export { AGENT_DISPLAY }          from './agent-config'
+export type { ToolDomain }        from '../registry'
+
+// ── 青霄默认工具域 ─────────────────────────────────────────────
+
+/**
+ * 青霄默认加载的域（始终注入）
+ * web / library / system 按消息意图按需追加
+ */
+const QINGXIAO_DEFAULT_DOMAINS: ToolDomain[] = [
+  'cultivation', 'memory', 'vow', 'knowledge', 'meta',
+]
+
+/**
+ * 根据用户消息内容推断需要追加的域（纯规则，无 LLM 调用）
+ *
+ * 策略：宁可多加（功能完整）也不要少加（AI 看不见工具无法决策）。
+ * web 和 system 通常是「按需追加」的大头。
+ */
+export function inferExtraDomains(userMessage: string): ToolDomain[] {
+  const extra: ToolDomain[] = []
+  const text = userMessage.toLowerCase()
+
+  // web：搜索、查最新信息、抓页面
+  if (/搜索|搜一下|查一下|查查|最新|网上|在线|网页|链接|url|http|google|bing/.test(text)) {
+    extra.push('web')
+  }
+
+  // library：藏经阁、收藏、书单
+  if (/藏经阁|收藏|书单|资料库|文档库|collect/.test(text)) {
+    extra.push('library')
+  }
+
+  // system：文件操作、代码库、shell
+  if (/文件|目录|代码|项目|shell|执行|命令|ls |cat |git |npm |run |脚本/.test(text)) {
+    extra.push('system')
+  }
+
+  return extra
+}
+
+export function getQingxiaoDomains(userMessage?: string): ToolDomain[] {
+  const domains = [...QINGXIAO_DEFAULT_DOMAINS]
+  if (userMessage) {
+    for (const d of inferExtraDomains(userMessage)) {
+      if (!domains.includes(d)) domains.push(d)
+    }
+  }
+  return domains
+}
 
 // ── JSON Schema → Zod 转换（覆盖现有工具的参数类型） ────────────
 
@@ -49,22 +101,6 @@ function buildZodSchema(
     shape[key] = required.includes(key) ? (base as any).unwrap?.() ?? base : base
   }
   return z.object(shape)
-}
-
-// ── 工具集分组 ────────────────────────────────────────────────
-
-export const TOOL_SETS: Record<string, string[] | '*'> = {
-  search_agent:  ['web_search', 'fetch_url'],
-  code_agent:    ['read_leetcode_records', 'read_user_blogs', 'search_blog_posts', 'search_library', 'list_library'],
-  planner_agent: ['read_cultivation_stats', 'read_leetcode_records', 'search_conversations'],
-  qingxiao:      '*',
-}
-
-export const AGENT_DISPLAY: Record<string, string> = {
-  qingxiao:      '青霄',
-  search_agent:  '搜寻使',
-  code_agent:    '算法师',
-  planner_agent: '星盘官',
 }
 
 // ── 构建 LangChain 工具列表 ───────────────────────────────────
@@ -113,16 +149,10 @@ export function invalidateToolCache() {
   _cachedTools = null
 }
 
-export function getLangChainToolsFor(agentId: string): DynamicStructuredTool[] {
-  const all = getLangChainTools()
-  const set = TOOL_SETS[agentId]
-
-  return all.filter(t => {
-    // Step 1: TOOL_SETS 白名单过滤（内置工具）
-    if (set && set !== '*' && !t.name.includes('__')) {
-      if (!(set as string[]).includes(t.name)) return false
-    }
-    // Step 2: MCP namespace → agent 可见性过滤
-    return isToolVisibleToAgent(t.name, agentId)
+export function getLangChainToolsFor(agentId: string, domains?: ToolDomain[]): DynamicStructuredTool[] {
+  return getLangChainTools().filter(t => {
+    if (!isToolVisibleToAgent(t.name, agentId)) return false
+    if (agentId === 'qingxiao' && domains) return isToolInDomains(t.name, domains)
+    return true
   })
 }

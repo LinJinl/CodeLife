@@ -10,7 +10,7 @@ import { config }          from "@/lib/data"
 // 中文字体体积极大，Turbopack 不支持 @vercel/turbopack-next/internal/font/google/font
 // 统一改用 Google Fonts CDN <link> 加载，运行时按需拉取
 export const metadata: Metadata = {
-  title: config.site.title + ' · ' + config.site.subtitle,
+  title: '道途',
   description: config.site.subtitle,
 }
 

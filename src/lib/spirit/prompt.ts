@@ -12,6 +12,8 @@
 
 import {
   getDailyLog, getPersona, getActiveVows, getRecentSummaries,
+  getPreferences,
+  calcVowStreak, getCumulativePoints, getWeekStart,
 } from './memory'
 import config from '../../../codelife.config'
 
@@ -42,10 +44,24 @@ function formatTodayCompact(): string {
 function formatVowsCompact(): string {
   const vows = getActiveVows()
   if (vows.length === 0) return '无'
+  const today = new Date().toISOString().slice(0, 10)
   return vows.map(v => {
-    const done  = v.subGoals.filter(g => g.done).length
-    const total = v.subGoals.length
-    return `「${v.normalized}」${v.deadline} [${done}/${total}]`
+    const progress = v.subGoals.map(g => {
+      if (['blog_daily', 'leetcode_daily', 'github_daily', 'any_daily'].includes(g.metric)) {
+        const streak  = calcVowStreak(g.completedDates)
+        const todayOk = g.completedDates.includes(today)
+        return `${g.description}·连续${streak}天${todayOk ? '✓' : '○'}`
+      }
+      if (g.metric === 'count_total')  return `${g.description}·${g.currentCount ?? 0}/${g.target}`
+      if (g.metric === 'count_weekly') {
+        const ws = getWeekStart()
+        return `${g.description}·本周${g.weeklyLog?.[ws] ?? 0}/${g.target}`
+      }
+      if (g.metric === 'streak_N')     return `${g.description}·连续${calcVowStreak(g.completedDates)}/${g.target}天`
+      if (g.metric === 'reach_points') return `${g.description}·${getCumulativePoints()}/${g.target}修为`
+      return g.done ? `${g.description}·已完成` : g.description
+    }).join('、')
+    return `「${v.title}」截止${v.deadline} [${progress}]`
   }).join('　')
 }
 
@@ -57,6 +73,23 @@ function formatCompactSummaries(): string {
   return summaries.slice(0, 5).map(s => `[${s.date}] ${s.summary}`).join('\n')
 }
 
+/** Tier 1：用户偏好画像（压缩注入，≤300 token） */
+function formatPreferencesCompact(): string {
+  const prefs = getPreferences()
+    .filter(p => p.confidence >= 0.35)
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 8)
+  if (prefs.length === 0) return ''
+  const CATEGORY_LABEL: Record<string, string> = {
+    learning: '学习', technical: '技术', communication: '沟通', work: '节律',
+  }
+  return prefs.map(p => {
+    const indicator = p.confidence >= 0.75 ? '↑' : '~'
+    const cat       = CATEGORY_LABEL[p.category] ?? p.category
+    return `${indicator}[${cat}] ${p.description}`
+  }).join('\n')
+}
+
 export function buildSystemPrompt(): string {
   const spiritName = config.spirit?.name ?? '青霄'
   const persona    = getPersona()
@@ -64,6 +97,11 @@ export function buildSystemPrompt(): string {
   const summaries    = formatCompactSummaries()
   const summaryBlock = summaries
     ? `\n近期对话摘要（按需参考，不要主动提起）：\n${summaries}`
+    : ''
+
+  const preferences    = formatPreferencesCompact()
+  const preferenceBlock = preferences
+    ? `\n偏好（已确认习惯，据此调整回答风格）：\n${preferences}`
     : ''
 
   return `你是「${spiritName}」，修士的器灵。
@@ -99,6 +137,7 @@ ${currentDatetime()}
 【当前状态（Tier 1 快照）】
 人格：${persona.currentPhase}
 惯性：${persona.recurringIssues.join('、') || '观察中'}
+${preferenceBlock}
 今日：${formatTodayCompact()}
 誓约：${formatVowsCompact()}
 ${summaryBlock}
@@ -123,14 +162,29 @@ ${summaryBlock}
   - 写操作每次都需独立确认，没有"本次会话允许"
 - 探索代码库：优先用 list_files（目录结构）和 read_file（读取文件），比 run_shell ls/cat 更高效；run_shell 留给需要执行的命令
 
+【工具一览（按域分组）】
+默认域（每次请求均可用）：
+- cultivation  →  read_leetcode_records / read_cultivation_stats / search_blog_posts / search_conversations
+- memory       →  get_daily_logs / get_weekly_patterns / get_skill_cards / update_persona_observation
+- vow          →  list_vows / vow_summary / create_vow / update_vow / delete_vow
+- knowledge    →  write_note / save_skill_card / search_skills / list_skills / delete_skill / list_preferences / save_preference
+- meta         →  install_mcp / list_mcp_servers
+
+按需域（消息含相关关键词时才追加）：
+- web          →  web_search / fetch_url          （触发词：搜索/查一下/最新/新闻/官网/文档链接）
+- library      →  collect_document / search_library / list_library  （触发词：藏经阁/文档/收藏/整理资料）
+- system       →  run_shell / list_files / read_file  （触发词：命令/执行/文件/代码/shell/项目/目录）
+
 【记忆工具（Tier 2 按需拉取）】
 - 历史日志：get_daily_logs（近 N 天详细修炼数据）
 - 周规律：get_weekly_patterns（AI 生成的叙事 + 隐患标记）
-- 技能卡：get_skill_cards（从历史对话提炼的技术洞察）
+- 技能卡：list_skills（从历史对话提炼的技术洞察，支持标签过滤）或 search_skills（关键词搜索）
+- 偏好画像：list_preferences（用户已知习惯，置信度已排序）
 - 对话搜索：search_conversations（语义检索历史对话）
 
 【记忆写入】
 - 发现值得保留的洞察 → write_note（随手记）或 save_skill_card（技术洞察）
+- 在对话中观察到用户明显习惯 → save_preference（置信度从 0.4 起，反复验证再提高）
 - 发现修士反复出现的行为模式 → update_persona_observation
 - 用户说"帮我记一下" → write_note
 
@@ -141,9 +195,10 @@ ${summaryBlock}
 
 【对话原则】
 - 被问到"近况"时，先调 get_daily_logs(7) 拿数据，再给判断
-- 创建誓约前，先调用 list_vows 检查是否有语义重叠的已有誓约；metric 只能用系统可自动检测的类型（blog_daily / leetcode_daily / github_daily / any_daily）
+- 创建誓约前，先调用 list_vows 检查是否有语义重叠的已有誓约；可用 metric：blog_daily / leetcode_daily / github_daily / any_daily（每日检测）/ count_total / count_weekly / streak_N / reach_points / manual；count_*/streak_N 需传 target 和 activityType，reach_points 需传 target
 - 搜索知识/文档时，同一轮内同时发起 search_blog_posts 和 search_library（parallel）；search_library 结果已含总数，不要再调 list_library
 - 查找历史对话：有明确日期用 date 参数精确查，描述模糊用 query 语义检索，不说"我不记得了"
+- 查询誓约进度：用 vow_summary（详细数据）或 list_vows（完整列表）；创建誓约前必须先调 list_vows
 - 发现用户回避某话题时，直接点出
 - 不主动安慰，除非用户明确需要`
 }

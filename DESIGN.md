@@ -412,10 +412,17 @@ content/
     │   { observedTraits[], recurringIssues[], currentPhase, milestones[], lastUpdated }
     ├── vows.json             誓约记录（用户创建/完成）
     │   [{ id, title, subGoals[], status, deadline }]
+    ├── preferences.json      用户偏好画像（LLM 从对话提炼）
+    │   [{ id, key, category, description, confidence, updatedAt }]
     ├── conversations/{date}.json  对话历史（前端 POST 保存）
     │   { date, messages[{ role, content }] }
-    └── library/index.json    藏经阁收藏
-        [{ id, url, title, summary, tags[], category, savedAt }]
+    ├── summaries/{date}.json 对话摘要（按需生成）
+    ├── skills/               技能卡（LLM 从对话提炼）
+    │   *.json  { id, title, insight, tags[], sourceDate }
+    ├── library/index.json    藏经阁收藏
+    │   [{ id, url, title, summary, tags[], category, savedAt }]
+    ├── blog_embeddings.json  博客向量索引（BM25 + embedding 混合检索）
+    └── conv_embeddings.json  对话向量索引
 ```
 
 博客数据由 `BlogAdapter` 接口统一抽象，支持 Notion / Ghost / 本地 MDX 三种来源。LeetCode 数据同理，支持手动 YAML 和非官方 GraphQL 两种来源。
@@ -439,9 +446,13 @@ content/
 **Phase 3 — 器灵 AI** ✅ 已完成：
 - ✅ LangGraph 多 Agent 系统（Planner / Sequential / Parallel）
 - ✅ 五层记忆系统（DailyLog / WeeklyPattern / PersonaProfile / Vow / Conversation）
+- ✅ 偏好画像系统（LLM 从对话提炼，置信度加权，注入 Tier 1 Prompt）
+- ✅ 技能卡系统（LLM 从对话提炼，支持搜索/编辑/删除）
+- ✅ 工具域化（29 个工具按 8 个域分组，按消息意图按需加载）
 - ✅ MCP 工具扩展（静态配置 + 动态装载，namespace 权限隔离）
-- ✅ 器灵界面（问道 / 法器双 Tab，SSE 实时流）
-- ✅ 誓约系统（创建/追踪/自动核验）
+- ✅ 器灵界面（问道 / 法器双 Tab，SSE 实时流；SpiritWidget 已拆分为 4 个模块）
+- ✅ 誓约系统（创建/追踪/自动核验，vow_summary 详细进度查看）
+- ✅ /炼心 命令（一键将当前对话提炼为技能卡）
 
 **Phase 4 — 待实现** 🔲：
 - 🔲 修炼历程时间线
@@ -490,15 +501,16 @@ content/
 
 ### 记忆系统
 
-五层记忆，全部存于 `content/spirit/`，每次对话实时注入 System Prompt：
+六层记忆，全部存于 `content/spirit/`，每次对话实时注入 System Prompt：
 
-| 层级 | 更新时机 |
-|------|----------|
-| DailyLog | 每次对话自动 sync |
-| WeeklyPattern | 每周一 LLM 生成 |
-| PersonaProfile | 每 7 天 LLM 更新 |
-| Vow | 用户对话创建/更新 |
-| Conversation | 每次对话结束前端保存 |
+| 层级 | 更新时机 | Prompt 层 |
+|------|----------|-----------|
+| DailyLog | 每次对话自动 sync | Tier 1（今日快照） |
+| WeeklyPattern | 每周一 LLM 生成 | Tier 2（工具按需拉取） |
+| PersonaProfile | 每 7 天 LLM 更新 | Tier 1（人格/惯性） |
+| Preferences | 对话中持续提炼 | Tier 1（偏好画像，置信度 ≥0.35 的前 8 条） |
+| Vow | 用户对话创建/更新 | Tier 1（誓约进度） |
+| Conversation | 每次对话结束前端保存 | Tier 1（近 5 天摘要） |
 
 ---
 

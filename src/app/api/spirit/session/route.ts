@@ -15,6 +15,19 @@ function todayStr() {
 }
 
 export async function GET(req: NextRequest) {
+  // ?list=true → 返回最近 60 天内有对话记录的日期列表（倒序）
+  if (req.nextUrl.searchParams.get('list') === 'true') {
+    const dates: string[] = []
+    for (let i = 0; i < 60; i++) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      const date = d.toISOString().slice(0, 10)
+      const conv = getConversation(date)
+      if (conv.messages.length > 0) dates.push(date)
+    }
+    return Response.json(dates)
+  }
+
   const date = req.nextUrl.searchParams.get('date') ?? todayStr()
   const conv = getConversation(date)
   return Response.json(conv)

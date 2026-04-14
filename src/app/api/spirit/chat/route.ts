@@ -19,6 +19,7 @@ import { getCompiledGraph, getRecursionLimit } from '@/lib/spirit/langgraph/grap
 import { getDailyLog, getConversation }        from '@/lib/spirit/memory'
 import { syncToday }           from '@/lib/spirit/sync'
 import { quickClassify }       from '@/lib/spirit/langgraph/classify'
+import { getQingxiaoDomains }  from '@/lib/spirit/langgraph/tools'
 // recursionLimit 在 planner 解析出并行任务数后才能精确计算，
 // 这里保守地用最大值（5 个并行任务）
 const DEFAULT_PARALLEL = 5
@@ -83,11 +84,16 @@ export async function POST(req: NextRequest) {
     ? quickClassify(langchainMessages) === 'plan'
     : false
 
-  const lastUserMsg = langchainMessages.findLast(m => m._getType() === 'human')
-  const msgPreview  = (typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '').slice(0, 80)
+  const lastUserMsg  = langchainMessages.findLast(m => m._getType() === 'human')
+  const lastUserText = (typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '')
+  const msgPreview   = lastUserText.slice(0, 80)
   console.log(`[spirit] chat request: usePlanner=${usePlanner} msgs=${langchainMessages.length} "${msgPreview}"`)
 
-  const graph          = getCompiledGraph(agentId)
+  // 推断本次请求需要的工具域（直通调试图时不需要）
+  const domains = (!agentId || agentId === 'auto') ? getQingxiaoDomains(lastUserText) : undefined
+  if (domains) console.log(`[spirit] domains: ${domains.join(', ')}`)
+
+  const graph          = getCompiledGraph(agentId, domains)
   const recursionLimit = getRecursionLimit(DEFAULT_PARALLEL)
   const encoder        = new TextEncoder()
 

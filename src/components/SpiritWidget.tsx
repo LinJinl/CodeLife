@@ -1,51 +1,43 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, memo } from 'react'
-import { usePathname } from 'next/navigation'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
-import type { SpiritEvent, LibraryCard } from '@/lib/spirit/protocol'
+import { MessageItem } from './spirit/MessageItem'
+import { useSpiritChat } from './spirit/useSpiritChat'
+import type { Message } from './spirit/types'
+import type { SkillCardData } from '@/lib/spirit/protocol'
 
-/** 单条执行步骤，归属于消息，随消息持久化 */
-interface ExecutionStep {
-  id:       string
-  type:     'task' | 'tool'
-  display:  string   // agent 展示名 / 工具展示名
-  desc?:    string   // task: 子任务描述 / tool: 输入参数摘要
-  brief?:   string   // tool: 结果摘要
-  links?:   { title: string; url: string }[]   // web_search / fetch_url 的可点击结果
-  done:     boolean
+// ── 偏好类型（与 memory.ts 保持一致，不引入服务端模块）────────────────
+interface PrefItem {
+  id:               string
+  category:         string
+  key:              string
+  description:      string
+  confidence:       number
+  evidence:         string[]
+  counterEvidence?: string
+  lastSeen:         string
+  updatedAt:        string
 }
 
-interface PermissionRequest {
-  token:    string
-  command:  string
-  workdir:  string
-  level:    'moderate' | 'destructive' | 'write'
-  resolved: boolean
+const PREF_CATEGORY_LABEL: Record<string, string> = {
+  learning:      '学习',
+  technical:     '技术',
+  communication: '沟通',
+  work:          '节律',
 }
 
-interface Message {
-  role:               'user' | 'assistant'
-  content:            string
-  timestamp:          string
-  cards?:             LibraryCard[]
-  steps?:             ExecutionStep[]
-  strategy?:          'direct' | 'sequential' | 'parallel'
-  ctxLabels?:         string[]   // 发送时附带的页面上下文标签（用于历史记录展示）
-  permissionRequest?: PermissionRequest
-  thinking?:          string     // <think> 内容，可折叠显示
-}
+function todayStr() { return new Date().toISOString().slice(0, 10) }
 
-const SLASH_COMMANDS = [
-  { cmd: '/观心', desc: '分析近期修炼状态',     fill: '近况如何' },
-  { cmd: '/指路', desc: '推荐今日该做什么',     fill: '今天该做什么' },
-  { cmd: '/问道', desc: '提问技术或概念问题',   fill: '我想问：' },
-  { cmd: '/立誓', desc: '设定一个可验证的目标', fill: '我想定一个目标：' },
-  { cmd: '/藏经', desc: '收藏文章到藏经阁',     fill: '帮我收藏这篇文章：' },
-  { cmd: '/寻典', desc: '检索藏经阁中的文章',   fill: '帮我检索藏经阁中关于' },
-  { cmd: '/此页', desc: '将当前页面内容注入上下文', fill: '' },
-  { cmd: '/install', desc: '装载 MCP 法器包',   fill: '/install ' },
-]
+/** 日期标签显示：今日 / 昨日 / M/D */
+function dateLabel(date: string): string {
+  const today = todayStr()
+  if (date === today) return '今日'
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
+  if (date === yesterday.toISOString().slice(0, 10)) return '昨日'
+  const [, m, d] = date.split('-')
+  return `${parseInt(m)}/${parseInt(d)}`
+}
 
 const MIN_W       = 300
 const MAX_W_RATIO = 0.65
@@ -54,409 +46,12 @@ function defaultWidth() {
   return Math.round(Math.min(Math.max(window.innerWidth * 0.36, 400), 560))
 }
 
-function todayStr() { return new Date().toISOString().slice(0, 10) }
-
-// ── 藏经阁结果卡片 ─────────────────────────────────────────────
-
-function LibraryCards({ entries }: { entries: LibraryCard[] }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
-      {entries.map(e => (
-        <div key={e.id} style={{
-          background: 'var(--deep)',
-          border: '1px solid var(--ink-trace)',
-          padding: '10px 14px',
-          borderRadius: 2,
-        }}>
-          {e.url ? (
-            <a href={e.url} target="_blank" rel="noopener noreferrer" style={{
-              fontFamily: 'var(--font-serif)', fontSize: 13,
-              color: 'var(--ink)', letterSpacing: 1, lineHeight: 1.5,
-              textDecoration: 'none', borderBottom: '1px solid var(--ink-trace)',
-              display: 'inline',
-            }}>
-              {e.title}
-            </a>
-          ) : (
-            <span style={{ fontFamily: 'var(--font-serif)', fontSize: 13, color: 'var(--ink)', letterSpacing: 1 }}>
-              {e.title}
-            </span>
-          )}
-          {e.summary && (
-            <div style={{
-              fontFamily: 'var(--font-serif)', fontSize: 11,
-              color: 'var(--ink-dim)', lineHeight: 1.7, margin: '6px 0 8px',
-              letterSpacing: 0.3,
-            }}>
-              {e.summary}
-            </div>
-          )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <a href="/resources" style={{
-              fontFamily: 'var(--font-serif)', fontSize: 9, letterSpacing: 1,
-              padding: '1px 6px', border: '1px solid',
-              borderColor: categoryColor(e.category),
-              color: categoryColor(e.category),
-              textDecoration: 'none', flexShrink: 0,
-            }}>
-              {e.category}
-            </a>
-            {e.tags.map(tag => (
-              <a key={tag} href={`/resources?tag=${encodeURIComponent(tag)}`} style={{
-                fontFamily: 'var(--font-serif)', fontSize: 9, letterSpacing: 1,
-                padding: '1px 6px', border: '1px solid var(--ink-trace)',
-                color: 'var(--ink-dim)', textDecoration: 'none',
-              }}>
-                {tag}
-              </a>
-            ))}
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--ink-trace)', marginLeft: 'auto' }}>
-              {new Date(e.savedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace('/', '-')}
-            </span>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-const CATEGORY_COLORS: Record<string, string> = {
-  '算法': 'var(--jade)', '系统设计': 'var(--gold-dim)', '工程实践': 'var(--gold-dim)',
-  '前端': 'var(--seal)', '后端': 'var(--seal)', '数学': 'var(--ink-mid)', '其他': 'var(--ink-dim)',
-}
-function categoryColor(cat: string) { return CATEGORY_COLORS[cat] ?? 'var(--ink-dim)' }
-
-// ── 思考过程折叠块 ─────────────────────────────────────────────
-
-function ThinkingBlock({ content, streaming }: { content: string; streaming: boolean }) {
-  const [expanded, setExpanded] = useState(false)
-  if (!content && !streaming) return null
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <button
-        onClick={() => setExpanded(v => !v)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 5,
-          background: 'none', border: 'none', cursor: 'pointer',
-          padding: '2px 0', color: 'var(--ink-dim)',
-        }}
-      >
-        <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: 1,
-          color: streaming ? 'var(--gold-dim)' : 'var(--ink-dim)',
-        }}>
-          {streaming ? '推演中' : '推演'}
-        </span>
-        <span style={{
-          fontSize: 8, color: 'var(--ink-trace)',
-          transform: expanded ? 'rotate(90deg)' : 'none',
-          display: 'inline-block', transition: 'transform 0.15s',
-        }}>▶</span>
-      </button>
-      {expanded && content && (
-        <div style={{
-          marginTop: 4, padding: '6px 10px',
-          borderLeft: '2px solid var(--ink-trace)',
-          fontFamily: 'var(--font-serif)', fontSize: 11,
-          color: 'var(--ink-dim)', lineHeight: 1.7,
-          letterSpacing: 0.3, whiteSpace: 'pre-wrap',
-          maxHeight: 240, overflowY: 'auto',
-        }}>
-          {content}
-          {streaming && <span style={{ opacity: 0.4, animation: 'spirit-blink 1s infinite' }}>▌</span>}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── 消息条目（memo 避免输入时重渲染） ────────────────────────
-
-const MessageItem = memo(function MessageItem({
-  msg, isLast, loading, phase, onPermission,
-}: {
-  msg:           Message
-  isLast:        boolean
-  loading:       boolean
-  phase:         'idle' | 'thinking' | 'tooling' | 'replying'
-  onPermission?: (decision: 'once' | 'session' | 'deny') => void
-}) {
-  const streamingThinking = loading && isLast && phase === 'thinking' && !!msg.thinking
-  if (msg.role === 'user') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-        <div style={{
-          fontFamily: 'var(--font-serif)', fontSize: 13,
-          color: 'var(--ink-mid)', lineHeight: 1.7,
-          maxWidth: '80%', padding: '7px 12px',
-          background: 'var(--surface)', border: '1px solid var(--ink-trace)',
-          whiteSpace: 'pre-wrap', letterSpacing: 0.3,
-        }}>
-          {msg.content}
-        </div>
-        {msg.ctxLabels && msg.ctxLabels.length > 0 && (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {msg.ctxLabels.map(label => (
-              <span key={label} style={{
-                fontFamily: 'var(--font-serif)', fontSize: 9, letterSpacing: 1,
-                color: 'var(--jade)', padding: '1px 6px',
-                border: '1px solid rgba(74,125,94,0.3)',
-              }}>
-                ¶ {label}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  const streaming  = loading && isLast
-  const steps      = msg.steps ?? []
-  const hasSteps   = steps.length > 0
-  const hasCards   = (msg.cards?.length ?? 0) > 0
-  const hideText   = hasCards && !streaming
-  // 并行模式：所有子任务完成，synthesizer 正在整合（"整合中"专用）
-  const isSynthesizing = streaming && hasSteps && steps.every(s => s.done) && !msg.content
-    && msg.strategy === 'parallel'
-  // 非并行模式：步骤全完成但文字未到（qingxiao 正在生成回复）
-  const isWaitingReply = streaming && hasSteps && steps.every(s => s.done) && !msg.content
-    && msg.strategy !== 'parallel'
-  // 步骤完成后，内容已有时淡化步骤（作为背景记录）
-  const stepsDim = hasSteps && !streaming && !!msg.content
-
-  return (
-    <div style={{ borderLeft: '1px solid var(--ink-trace)', paddingLeft: 12, marginLeft: 2 }}>
-
-      {/* ── 思考过程折叠块 ── */}
-      {(msg.thinking || streamingThinking) && (
-        <ThinkingBlock content={msg.thinking ?? ''} streaming={streamingThinking} />
-      )}
-
-      {/* ── 执行步骤区（持久化，随消息保留） ── */}
-      {hasSteps && (
-        <div style={{
-          marginBottom: msg.content ? 10 : 4,
-          opacity: stepsDim ? 0.65 : 1,
-          transition: 'opacity 0.4s',
-        }}>
-          {steps.map(step => (
-            <div key={step.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 0' }}>
-              {step.done
-                ? <span style={{ fontSize: 9, color: 'var(--jade)', flexShrink: 0, lineHeight: '18px' }}>✓</span>
-                : <div style={{
-                    width: 4, height: 4, borderRadius: '50%', flexShrink: 0, marginTop: 7,
-                    border: '1px solid var(--gold-dim)', borderTopColor: 'transparent',
-                    animation: 'spin 0.8s linear infinite',
-                  }} />
-              }
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <span style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: 1,
-                  color: step.done ? 'var(--jade)' : 'var(--gold-dim)',
-                }}>
-                  {step.display}
-                  {/* 完成后显示结果摘要 */}
-                  {step.done && step.brief && (
-                    <span style={{ color: 'var(--ink-dim)', marginLeft: 6, fontFamily: 'var(--font-serif)', letterSpacing: 0.3 }}>
-                      {step.brief}
-                    </span>
-                  )}
-                </span>
-                {/* 参数摘要（执行中显示，完成后保留作为上下文） */}
-                {step.desc && (
-                  <span style={{
-                    fontFamily: 'var(--font-mono)', fontSize: 9,
-                    color: 'var(--ink-dim)',
-                    letterSpacing: 0.3, lineHeight: 1.5,
-                  }}>
-                    {step.desc}
-                  </span>
-                )}
-                {/* 可点击链接（web_search / fetch_url 的结果） */}
-                {step.links && step.links.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
-                    {step.links.map((link, i) => (
-                      <a key={i} href={link.url} target="_blank" rel="noopener noreferrer"
-                        style={{
-                          fontFamily: 'var(--font-serif)', fontSize: 10,
-                          color: 'var(--jade)', letterSpacing: 0.3, lineHeight: 1.5,
-                          textDecoration: 'none',
-                          borderBottom: '1px solid rgba(74,125,94,0.25)',
-                          display: 'block',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          maxWidth: '100%',
-                        }}
-                        title={link.url}
-                      >
-                        ↗ {link.title}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          {/* 并行模式：等待 synthesizer 整合 */}
-          {isSynthesizing && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              paddingTop: 6, paddingLeft: 11,
-            }}>
-              {[0, 1, 2].map(i => (
-                <div key={i} style={{
-                  width: 3, height: 3, borderRadius: '50%', background: 'var(--gold-dim)',
-                  animation: `spirit-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
-                }} />
-              ))}
-              <span style={{
-                fontFamily: 'var(--font-serif)', fontSize: 10,
-                color: 'var(--gold-dim)', letterSpacing: 1, opacity: 0.7,
-              }}>整合中</span>
-            </div>
-          )}
-          {/* 直接/顺序模式：工具跑完，等待 AI 开始回复 */}
-          {isWaitingReply && (
-            <div style={{ display: 'flex', gap: 5, alignItems: 'center', paddingTop: 6, paddingLeft: 11 }}>
-              {[0, 1, 2].map(i => (
-                <div key={i} style={{
-                  width: 3, height: 3, borderRadius: '50%', background: 'var(--gold-dim)',
-                  animation: `spirit-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
-                }} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── 初始推演 dots（还没有任何步骤和内容）── */}
-      {streaming && !hasSteps && !msg.content && (
-        <div style={{ display: 'flex', gap: 5, alignItems: 'center', paddingBottom: 4 }}>
-          {[0, 1, 2].map(i => (
-            <div key={i} style={{
-              width: 3, height: 3, borderRadius: '50%', background: 'var(--gold-dim)',
-              animation: `spirit-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
-            }} />
-          ))}
-        </div>
-      )}
-
-      {/* ── 权限确认区 ── */}
-      {msg.permissionRequest && !msg.permissionRequest.resolved && onPermission && (() => {
-        const pr      = msg.permissionRequest!
-        const isWrite = pr.level === 'write'
-        const isDest  = pr.level === 'destructive'
-        const accentColor = isDest ? 'var(--seal)' : isWrite ? 'var(--jade)' : 'var(--gold-dim)'
-        // write 操作每次都需要单独确认，不提供"本次会话允许"
-        const decisions = isWrite
-          ? (['once', 'deny'] as const)
-          : (['once', 'session', 'deny'] as const)
-        const labelMap: Record<string, string> = {
-          once:    isWrite ? '确认' : '执行一次',
-          session: '本次会话允许',
-          deny:    '拒绝',
-        }
-        const headerText = isDest ? '⚠ 高危操作' : isWrite ? '写操作确认' : '需要确认'
-
-        return (
-          <div style={{
-            margin: '8px 0', padding: '10px 14px',
-            border: `1px solid ${accentColor}`,
-            borderRadius: 2, background: 'var(--deep)',
-          }}>
-            <div style={{
-              fontFamily: 'var(--font-mono)', fontSize: 10,
-              color: accentColor, letterSpacing: 1, marginBottom: 6,
-            }}>
-              {headerText}
-            </div>
-            <div style={{
-              fontFamily: 'var(--font-serif)', fontSize: 12,
-              color: 'var(--ink)', lineHeight: 1.6,
-              marginBottom: 10,
-            }}>
-              {pr.command}
-            </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {decisions.map(d => (
-                <button
-                  key={d}
-                  onClick={() => onPermission(d)}
-                  style={{
-                    fontFamily: 'var(--font-serif)', fontSize: 10, letterSpacing: 1,
-                    padding: '3px 10px', border: '1px solid',
-                    borderColor: d === 'deny' ? 'var(--ink-trace)'
-                      : d === 'session' ? 'var(--jade)'
-                      : accentColor,
-                    color: d === 'deny' ? 'var(--ink-dim)'
-                      : d === 'session' ? 'var(--jade)'
-                      : accentColor,
-                    background: 'transparent', cursor: 'pointer', borderRadius: 1,
-                  }}
-                >
-                  {labelMap[d]}
-                </button>
-              ))}
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* ── 消息正文 ── */}
-      {!hideText && (
-        <div className="spirit-md">
-          {msg.content
-            ? <ReactMarkdown>{msg.content}</ReactMarkdown>
-            : (!streaming ? <span style={{ color: 'var(--ink-trace)' }}>…</span> : null)
-          }
-          {streaming && phase === 'replying' && (
-            <span style={{ opacity: 0.4, animation: 'spirit-blink 1s infinite' }}>▌</span>
-          )}
-        </div>
-      )}
-      {hasCards && <LibraryCards entries={msg.cards!} />}
-    </div>
-  )
-})
-
-// ── 主组件 ───────────────────────────────────────────────────
-
-interface MCPInfo {
-  allowDynamicInstall: boolean
-  adapters: { namespace: string; name: string }[]
-  tools: { name: string; displayName: string; description: string; category: string; params: string[] }[]
-}
-
 export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
-  const pathname = usePathname()
-
-  // SSR 始终 false，hydration 完成后从 localStorage 恢复，避免服务端/客户端不一致
-  const [open, setOpen] = useState(false)
+  // SSR 始终 false，hydration 完成后从 localStorage 恢复
+  const [open,   setOpen]   = useState(false)
+  const [panelW, setPanelW] = useState(defaultWidth)
   useEffect(() => { setOpen(localStorage.getItem('spirit-open') === '1') }, [])
-  const [messages,   setMessages]   = useState<Message[]>([])
-  const [input,      setInput]      = useState('')
-  const [loading,    setLoading]    = useState(false)
-  const [phase,      setPhase]      = useState<'idle'|'thinking'|'tooling'|'replying'>('idle')
-  const [cmdMenu,    setCmdMenu]    = useState(false)
-  const [cmdFilter,  setCmdFilter]  = useState('')
-  const [cmdIdx,     setCmdIdx]     = useState(0)
-  const [panelW,     setPanelW]     = useState(defaultWidth)
-  // 上下文：支持多个叠加
-  const [contexts,   setContexts]   = useState<{ text: string; path: string; label: string }[]>([])
-  const [ctxLoading, setCtxLoading] = useState(false)
-  // Tab 切换
-  const [activeTab, setActiveTab] = useState<'chat' | 'tools'>('chat')
-  // 法器 Tab 数据
-  const [mcpData,    setMcpData]    = useState<MCPInfo | null>(null)
-  const [toolList,   setToolList]   = useState<{ name: string; displayName: string; description: string; category: string }[]>([])
-  const [installPkg, setInstallPkg] = useState('')
-  const [installing, setInstalling] = useState(false)
 
-  // 正在构建的卡片
-  const pendingCards = useRef<LibraryCard[]>([])
-
-  const bottomRef  = useRef<HTMLDivElement>(null)
-  const inputRef   = useRef<HTMLTextAreaElement>(null)
   const dragging   = useRef(false)
   const dragStartX = useRef(0)
   const dragStartW = useRef(0)
@@ -474,7 +69,6 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
       const delta = dragStartX.current - e.clientX
       const maxW  = Math.floor(window.innerWidth * MAX_W_RATIO)
       const w     = Math.max(MIN_W, Math.min(dragStartW.current + delta, maxW))
-      // 直接写 CSS variable → 主内容实时跟随，无需等 React re-render
       document.documentElement.style.setProperty('--spirit-panel-w', `${w}px`)
       setPanelW(w)
     }
@@ -483,7 +77,7 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
       dragging.current = false
       document.body.style.userSelect  = ''
       document.body.style.cursor      = ''
-      document.body.style.transition  = ''  // 恢复 CSS 里定义的 transition
+      document.body.style.transition  = ''
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup',   onUp)
@@ -497,426 +91,193 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
     dragStartW.current = panelW
     document.body.style.userSelect  = 'none'
     document.body.style.cursor      = 'ew-resize'
-    // 拖拽时禁用 body 的 transition，避免内容区跟随有延迟
     document.body.style.transition  = 'none'
   }
 
-  // 加载今日会话
+  const chat = useSpiritChat(open)
+  const {
+    messages, loading, phase,
+    input,
+    cmdMenu, cmdIdx, setCmdIdx, filteredCmds,
+    contexts, setContexts, ctxLoading,
+    activeTab, setActiveTab,
+    mcpData, installPkg, setInstallPkg, installing,
+    send, handlePermission, handleInput, handleKeyDown, selectCmd,
+    doInstall, loadTools,
+    bottomRef, inputRef,
+  } = chat
+
+  // ── 技能卡 ───────────────────────────────────────────────────
+  const [skillCards,    setSkillCards]    = useState<SkillCardData[]>([])
+  const [skillsLoading, setSkillsLoading] = useState(false)
+  const [skillsTotal,   setSkillsTotal]   = useState(0)
+  const [skillNeedsSync,setSkillNeedsSync]= useState(false)
+  const [extracting,    setExtracting]    = useState(false)
+  const [extractResult, setExtractResult] = useState<string | null>(null)
+  const [skillTagFilter,setSkillTagFilter]= useState<string | null>(null)
+  const [lastExtracted,  setLastExtracted]  = useState<string | null>(null)
+  const [editingId,      setEditingId]      = useState<string | null>(null)
+  const [editDraft,      setEditDraft]      = useState({ title: '', insight: '', body: '', tags: '', userNotes: '' })
+  const [deletingId,     setDeletingId]     = useState<string | null>(null)
+  const [savingEdit,     setSavingEdit]     = useState(false)
+  const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null)
+
+  // ── 偏好画像 ─────────────────────────────────────────────────
+  const [prefs,          setPrefs]          = useState<PrefItem[]>([])
+  const [prefsLoading,   setPrefsLoading]   = useState(false)
+  const [prefsTotal,     setPrefsTotal]     = useState(0)
+  const [prefExtracting, setPrefExtracting] = useState(false)
+  const [prefResult,     setPrefResult]     = useState<string | null>(null)
+  const [prefCatFilter,  setPrefCatFilter]  = useState<string | null>(null)
+  const [editingPrefId,  setEditingPrefId]  = useState<string | null>(null)
+  const [prefDraft,      setPrefDraft]      = useState({ description: '', confidence: 0 })
+  const [deletingPrefId, setDeletingPrefId] = useState<string | null>(null)
+
+  const loadPrefs = useCallback(async () => {
+    setPrefsLoading(true)
+    try {
+      const res  = await fetch('/api/spirit/preferences')
+      const data = await res.json() as { prefs: PrefItem[]; total: number }
+      const sorted = [...data.prefs].sort((a, b) => b.confidence - a.confidence)
+      setPrefs(sorted)
+      setPrefsTotal(data.total)
+    } catch { /* ignore */ }
+    finally { setPrefsLoading(false) }
+  }, [])
+
+  const savePrefEdit = useCallback(async (id: string) => {
+    try {
+      await fetch('/api/spirit/preferences', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, description: prefDraft.description, confidence: prefDraft.confidence }),
+      })
+      setEditingPrefId(null)
+      await loadPrefs()
+    } catch { /* ignore */ }
+  }, [prefDraft, loadPrefs])
+
+  const deletePref = useCallback(async (id: string) => {
+    try {
+      await fetch('/api/spirit/preferences', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      setDeletingPrefId(null)
+      await loadPrefs()
+    } catch { /* ignore */ }
+  }, [loadPrefs])
+
+  const extractPrefsNow = useCallback(async () => {
+    setPrefExtracting(true)
+    setPrefResult(null)
+    try {
+      const res  = await fetch('/api/spirit/preferences', { method: 'POST' })
+      const data = await res.json() as { ok?: boolean; changedCount?: number; total?: number }
+      if (data.ok) {
+        setPrefResult(
+          (data.changedCount ?? 0) > 0
+            ? `提炼完成，更新 ${data.changedCount} 条（共 ${data.total} 条）`
+            : '本轮对话暂无新观测'
+        )
+      }
+      await loadPrefs()
+    } catch { setPrefResult('提炼失败，请稍后再试') }
+    finally { setPrefExtracting(false) }
+  }, [loadPrefs])
+
+  const loadSkills = useCallback(async () => {
+    setSkillsLoading(true)
+    try {
+      const res  = await fetch('/api/spirit/skills')
+      const data = await res.json() as { cards: SkillCardData[]; total: number; needsSync: boolean; lastExtracted: string | null }
+      setSkillCards(data.cards)
+      setSkillsTotal(data.total)
+      setSkillNeedsSync(data.needsSync)
+      setLastExtracted(data.lastExtracted ?? null)
+    } catch { /* ignore */ }
+    finally { setSkillsLoading(false) }
+  }, [])
+
+  const saveEdit = useCallback(async (id: string) => {
+    setSavingEdit(true)
+    try {
+      const tagsArr = editDraft.tags.split(',').map(t => t.trim()).filter(Boolean)
+      await fetch('/api/spirit/skills', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, title: editDraft.title, insight: editDraft.insight, body: editDraft.body || undefined, tags: tagsArr, userNotes: editDraft.userNotes }),
+      })
+      setEditingId(null)
+      await loadSkills()
+    } catch { /* ignore */ }
+    finally { setSavingEdit(false) }
+  }, [editDraft, loadSkills])
+
+  const deleteCard = useCallback(async (id: string) => {
+    try {
+      await fetch('/api/spirit/skills', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      setDeletingId(null)
+      await loadSkills()
+    } catch { /* ignore */ }
+  }, [loadSkills])
+
+  const extractNow = useCallback(async () => {
+    setExtracting(true)
+    setExtractResult(null)
+    try {
+      const res  = await fetch('/api/spirit/skills', { method: 'POST' })
+      const data = await res.json() as { ok?: boolean; newCount?: number; total?: number }
+      if (data.ok) {
+        setExtractResult(
+          (data.newCount ?? 0) > 0
+            ? `提炼完成，新增 ${data.newCount} 张（共 ${data.total} 张）`
+            : '本轮对话暂无新洞察'
+        )
+      }
+      await loadSkills()
+    } catch { setExtractResult('提炼失败，请稍后再试') }
+    finally { setExtracting(false) }
+  }, [loadSkills])
+
+  // ── 历史日期浏览 ─────────────────────────────────────────────
+  const [historyDates,  setHistoryDates]  = useState<string[]>([])
+  const [viewDate,      setViewDate]      = useState<string | null>(null)  // null = 今日
+  const [pastMessages,  setPastMessages]  = useState<Message[]>([])
+  const [pastLoading,   setPastLoading]   = useState(false)
+
+  // 打开时拉有记录的日期列表
   useEffect(() => {
     if (!open) return
-    fetch(`/api/spirit/session?date=${todayStr()}`)
+    fetch('/api/spirit/session?list=true')
       .then(r => r.json())
-      .then((conv: { messages: Message[] }) => { if (conv.messages.length > 0) setMessages(conv.messages) })
+      .then((dates: string[]) => setHistoryDates(dates))
       .catch(() => {})
   }, [open])
 
+  // 切换历史日期时拉取消息
+  const loadPastDate = useCallback(async (date: string) => {
+    setPastLoading(true)
+    try {
+      const res  = await fetch(`/api/spirit/session?date=${date}`)
+      const conv = await res.json() as { messages: Message[] }
+      setPastMessages(conv.messages)
+    } catch { /* ignore */ }
+    finally { setPastLoading(false) }
+  }, [])
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, phase])
+    if (!viewDate) { setPastMessages([]); return }
+    loadPastDate(viewDate)
+  }, [viewDate, loadPastDate])
 
-  const saveSession = useCallback((msgs: Message[]) => {
-    if (!msgs.length) return
-    fetch('/api/spirit/session', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: msgs }),
-    }).catch(() => {})
-  }, [])
-
-  /** 更新最后一条消息（步骤/策略写入用） */
-  const updateLastMsg = useCallback((updater: (msg: Message) => Message) => {
-    setMessages(prev => {
-      if (prev.length === 0) return prev
-      const updated = [...prev]
-      updated[updated.length - 1] = updater(updated[updated.length - 1])
-      return updated
-    })
-  }, [])
-
-  // 权限弹窗按钮回调：调用 approve API，成功后触发新轮次
-  const handlePermission = useCallback((msgIdx: number, decision: 'once' | 'session' | 'deny', token: string) => {
-    // 立即标记 resolved，隐藏按钮
-    setMessages(prev => {
-      if (!prev[msgIdx]) return prev
-      const updated = [...prev]
-      updated[msgIdx] = {
-        ...updated[msgIdx],
-        permissionRequest: { ...updated[msgIdx].permissionRequest!, resolved: true },
-      }
-      return updated
-    })
-    if (decision === 'deny') {
-      send('取消，不要执行该命令')
-      return
-    }
-    // 通知服务端批准令牌，再触发新轮次
-    fetch('/api/spirit/approve', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ token, decision }),
-    })
-      .then(r => r.json())
-      .then((data: { ok?: boolean }) => {
-        if (data.ok) send('已确认，请继续执行')
-        else         send('确认请求失败，请重试')
-      })
-      .catch(() => send('确认请求失败，请重试'))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  function resolveContent(raw: string): string {
-    const matched = SLASH_COMMANDS.find(c => c.cmd === raw.trim())
-    return matched ? (matched.fill || matched.cmd) : raw
-  }
-
-  async function loadPageContext(path = pathname): Promise<{ text: string; path: string } | null> {
-    if (ctxLoading) return null
-    // 已加载过则直接返回现有数据（不重复请求）
-    const existing = contexts.find(c => c.path === path)
-    if (existing) return existing
-    setCtxLoading(true)
-    try {
-      const res  = await fetch(`/api/spirit/context?path=${encodeURIComponent(path)}`)
-      const data = await res.json() as { text: string; path: string }
-      if (data.text) {
-        const label = path === '/' ? '主页' : path.split('/').filter(Boolean).join(' › ')
-        const ctx = { text: data.text, path, label }
-        setContexts(prev => [...prev, ctx])
-        return ctx  // ← 返回刚加载的数据，供调用方直接使用（绕开 React 闭包）
-      }
-    } catch { /* ignore */ }
-    finally { setCtxLoading(false) }
-    return null
-  }
-
-  async function doInstall() {
-    const pkg = installPkg.trim()
-    if (!pkg || installing) return
-    setInstalling(true)
-    try {
-      const res  = await fetch('/api/spirit/mcp', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'install', package: pkg }),
-      })
-      const data = await res.json() as { ok?: boolean; error?: string; toolCount?: number }
-      if (data.ok) {
-        setInstallPkg('')
-        setMcpData(null)
-        await loadTools(true)
-      } else {
-        alert(`装载失败：${data.error}`)
-      }
-    } catch (err) {
-      alert(`装载失败：${err instanceof Error ? err.message : String(err)}`)
-    } finally {
-      setInstalling(false)
-    }
-  }
-
-  async function loadTools(force = false) {
-    if (mcpData && !force) return
-    try {
-      const res  = await fetch('/api/spirit/mcp')
-      const data = await res.json() as MCPInfo
-      setMcpData(data)
-      setToolList(data.tools ?? [])
-    } catch { /* ignore */ }
-  }
-
-  async function send(text?: string) {
-    let raw = (text ?? input).trim()
-    if (!raw || loading) return
-
-    // 解析内联 /此页 — 触发上下文加载，从消息中移除
-    // freshCtx：本次 send 中刚加载的 context（还未进入 React state）
-    let freshCtx: { text: string; path: string } | null = null
-    if (raw.includes('/此页')) {
-      raw = raw.replace(/\/此页\s*/g, '').trim()
-      freshCtx = await loadPageContext()
-      if (!raw) { return }  // 纯 /此页 命令，只加载上下文
-    }
-
-    // ── /install 命令：动态安装 MCP 包 ──────────────────────
-    const installMatch = raw.match(/^\/install\s+(.+)$/)
-    if (installMatch) {
-      const pkg = installMatch[1].trim()
-      const userMsg: Message = { role: 'user', content: raw, timestamp: new Date().toISOString() }
-      const loadingMsg: Message = { role: 'assistant', content: '', timestamp: new Date().toISOString() }
-      setMessages(prev => [...prev, userMsg, loadingMsg])
-      setInput(''); setCmdMenu(false); setLoading(true); setPhase('tooling')
-      try {
-        const res  = await fetch('/api/spirit/mcp', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'install', package: pkg }),
-        })
-        const data = await res.json() as { ok?: boolean; error?: string; message?: string; toolCount?: number }
-        const reply = data.ok
-          ? `已装载法器 **${pkg}**，共引入 ${data.toolCount} 个新工具。切换到「法器」Tab 查看。`
-          : `装载失败：${data.error}`
-        setMessages(prev => {
-          const c = [...prev]
-          c[c.length - 1] = { ...c[c.length - 1], content: reply }
-          return c
-        })
-        if (data.ok) { setMcpData(null); loadTools(true) }
-      } catch (err) {
-        setMessages(prev => {
-          const c = [...prev]
-          c[c.length - 1] = { ...c[c.length - 1], content: `装载失败：${err instanceof Error ? err.message : String(err)}` }
-          return c
-        })
-      } finally { setLoading(false); setPhase('idle') }
-      return
-    }
-
-    const content = resolveContent(raw)
-
-    // 合并已有 contexts 和本次刚加载的 freshCtx（绕开 React state 闭包）
-    const allContexts = freshCtx && !contexts.some(c => c.path === freshCtx!.path)
-      ? [...contexts, freshCtx]
-      : contexts
-
-    const ctxLabels = allContexts.length > 0
-      ? allContexts.map(c => c.path === '/' ? '主页' : c.path.split('/').filter(Boolean).join(' › '))
-      : undefined
-
-    const userMsg: Message = { role: 'user', content: raw, timestamp: new Date().toISOString(), ctxLabels }
-    const history = [...messages, userMsg]
-    setMessages([...history, { role: 'assistant', content: '', timestamp: new Date().toISOString() }])
-    setInput('')
-    setCmdMenu(false)
-    setContexts([])   // 上下文已注入消息，清空引用栏
-    setLoading(true)
-    setPhase('thinking')
-    pendingCards.current = []
-
-    // SSE 闭包变量（生命周期 = 本次请求）
-    let stepSeq       = 0
-    let curStrategy: string | null = null
-    // tool name → [stepId, ...] FIFO，处理同名工具多次调用
-    const pendingTools = new Map<string, string[]>()
-
-    try {
-      const ctxMessages = allContexts.map(c => ({
-        role:    'system' as const,
-        content: `[页面上下文 — ${c.path}]\n${c.text}`,
-      }))
-
-      const res = await fetch('/api/spirit/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            // 当前页面：让 AI 知道用户所在页面的完整 URL，需要时可用 fetch_url 抓取内容
-            { role: 'system', content: `[当前页面：${typeof window !== 'undefined' ? window.location.href : pathname}]` },
-            ...ctxMessages,
-            ...history.map((m, i) => ({
-              role: m.role,
-              content: i === history.length - 1 && m.role === 'user' ? content : m.content,
-            })),
-          ],
-        }),
-      })
-      if (!res.ok || !res.body) throw new Error(await res.text())
-
-      const reader = res.body.getReader()
-      const dec    = new TextDecoder()
-      let buf = '', final: Message[] = []
-
-      outer: while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += dec.decode(value, { stream: true })
-        const lines = buf.split('\n'); buf = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          let ev: SpiritEvent
-          try { ev = JSON.parse(line.slice(6)) as SpiritEvent } catch { continue }
-
-          switch (ev.type) {
-
-            // ── 思考流（<think> 内容）───────────────────────
-            case 'thinking':
-              updateLastMsg(msg => ({ ...msg, thinking: (msg.thinking ?? '') + ev.chunk }))
-              break
-
-            // ── 文本流 ──────────────────────────────────────
-            case 'text':
-              setPhase('replying')
-              setMessages(prev => {
-                const c    = [...prev]
-                const last = c[c.length - 1]
-                const cards = pendingCards.current.length > 0 && !last.cards
-                  ? pendingCards.current : last.cards
-                c[c.length - 1] = { ...last, content: last.content + ev.chunk, cards }
-                final = c; return c
-              })
-              break
-
-            // ── 藏经阁卡片 ──────────────────────────────────
-            case 'cards':
-              pendingCards.current = [...pendingCards.current, ...ev.entries]
-              break
-
-            // ── 执行策略（planner 决策完成）────────────────
-            case 'strategy':
-              curStrategy = ev.mode
-              updateLastMsg(msg => ({ ...msg, strategy: ev.mode }))
-              break
-
-            // ── 并行子任务 ──────────────────────────────────
-            case 'task_start':
-              updateLastMsg(msg => ({
-                ...msg,
-                steps: [...(msg.steps ?? []), {
-                  id: ev.taskId, type: 'task',
-                  display: ev.display, desc: ev.desc, done: false,
-                }],
-              }))
-              break
-            case 'task_done':
-              updateLastMsg(msg => ({
-                ...msg,
-                steps: (msg.steps ?? []).map(s =>
-                  s.id === ev.taskId ? { ...s, done: true } : s
-                ),
-              }))
-              break
-
-            // ── 工具调用（非 parallel 模式显示）────────────
-            case 'tool_start':
-              if (curStrategy !== 'parallel') {
-                setPhase('tooling')
-                const sid = `t${stepSeq++}`
-                if (!pendingTools.has(ev.name)) pendingTools.set(ev.name, [])
-                pendingTools.get(ev.name)!.push(sid)
-                updateLastMsg(msg => ({
-                  ...msg,
-                  steps: [...(msg.steps ?? []), {
-                    id: sid, type: 'tool', display: ev.display,
-                    desc: ev.desc,   // 工具参数摘要（执行中可见）
-                    done: false,
-                  }],
-                }))
-              }
-              break
-            case 'tool_done':
-              if (curStrategy !== 'parallel') {
-                const ids = pendingTools.get(ev.name)
-                const sid = ids?.shift()
-                if (sid) {
-                  updateLastMsg(msg => ({
-                    ...msg,
-                    steps: (msg.steps ?? []).map(s =>
-                      s.id === sid ? { ...s, done: true, brief: ev.brief, links: ev.links } : s
-                    ),
-                  }))
-                }
-              }
-              break
-
-            // ── Sequential agent 切换（只更新 phase）───────
-            case 'agent_start':
-              setPhase('tooling')
-              break
-            case 'agent_end':
-              break
-
-            // ── 权限请求 ────────────────────────────────────
-            case 'permission_request':
-              updateLastMsg(msg => ({
-                ...msg,
-                permissionRequest: {
-                  token:    ev.token,
-                  command:  ev.command,
-                  workdir:  ev.workdir,
-                  level:    ev.level,
-                  resolved: false,
-                },
-              }))
-              break
-
-            case 'error': throw new Error(ev.message)
-            case 'done':  break outer
-          }
-        }
-      }
-
-      // 卡片收尾
-      if (pendingCards.current.length > 0) {
-        setMessages(prev => {
-          const c = [...prev]
-          if (!c[c.length - 1].cards) {
-            c[c.length - 1] = { ...c[c.length - 1], cards: pendingCards.current }
-          }
-          final = c; return c
-        })
-      }
-      saveSession(final.length > 0 ? final : history)
-    } catch (err) {
-      setMessages(prev => {
-        const c = [...prev]
-        c[c.length - 1] = { ...c[c.length - 1], content: `（器灵暂时沉默——${err instanceof Error ? err.message : '未知'}）` }
-        saveSession(c); return c
-      })
-    } finally {
-      setLoading(false); setPhase('idle')
-    }
-  }
-
-  function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    const val = e.target.value
-    const ta = e.target
-    ta.style.height = 'auto'
-    ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
-    setInput(val)
-    if (val.startsWith('/')) { setCmdMenu(true); setCmdFilter(val.slice(1).toLowerCase()); setCmdIdx(0) }
-    else setCmdMenu(false)
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (cmdMenu) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setCmdIdx(prev => Math.min(prev + 1, filteredCmds.length - 1))
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setCmdIdx(prev => Math.max(prev - 1, 0))
-        return
-      }
-      if (e.key === 'Tab' || e.key === 'Enter') {
-        e.preventDefault()
-        selectCmd(filteredCmds[cmdIdx])
-        return
-      }
-      if (e.key === 'Escape') { setCmdMenu(false); return }
-    }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!ctxLoading) send() }
-  }
-
-  function selectCmd(cmd?: typeof SLASH_COMMANDS[number]) {
-    if (!cmd) return
-    setCmdMenu(false)
-    // /此页 命令：加载上下文，保留已有输入文字
-    if (cmd.cmd === '/此页') {
-      loadPageContext()
-      // 清掉输入里的 /此页 前缀，保留后续文字
-      setInput(prev => prev.replace(/^\/此页\s*/, ''))
-      setTimeout(() => inputRef.current?.focus(), 0)
-      return
-    }
-    // /install 命令：在输入框保留 "/install " 前缀，等待用户输入包名
-    const val = cmd.fill || cmd.cmd
-    setInput(val)
-    setTimeout(() => {
-      const ta = inputRef.current; if (!ta) return
-      ta.style.height = 'auto'
-      ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length)
-    }, 0)
-  }
-
-  const filteredCmds = SLASH_COMMANDS.filter(c => c.cmd.includes(cmdFilter) || c.desc.includes(cmdFilter))
+  const isToday        = !viewDate || viewDate === todayStr()
+  const displayMessages = isToday ? messages : pastMessages
 
   return (
     <>
@@ -990,12 +351,11 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                 )}
               </div>
             </div>
-
             <button onClick={() => setOpen(false)} style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: 'var(--ink-dim)', fontSize: 16, padding: '2px 6px', lineHeight: 1,
-                marginLeft: 'auto',
-              }}>×</button>
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--ink-dim)', fontSize: 16, padding: '2px 6px', lineHeight: 1,
+              marginLeft: 'auto',
+            }}>×</button>
           </div>
 
           {/* ── Tab 栏 ── */}
@@ -1003,16 +363,29 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
             display: 'flex', borderBottom: '1px solid var(--ink-trace)',
             flexShrink: 0, background: 'var(--cave)',
           }}>
-            {(['chat', 'tools'] as const).map(tab => (
-              <button key={tab} onClick={() => { setActiveTab(tab); if (tab === 'tools') loadTools() }}
+            {(['chat', 'tools', 'skills', 'prefs'] as const).map(tab => (
+              <button key={tab} onClick={() => {
+                setActiveTab(tab)
+                if (tab === 'tools')  loadTools()
+                if (tab === 'skills') loadSkills()
+                if (tab === 'prefs')  loadPrefs()
+              }}
                 style={{
-                  padding: '9px 22px', border: 'none', background: 'none', cursor: 'pointer',
+                  padding: '9px 18px', border: 'none', background: 'none', cursor: 'pointer',
                   fontFamily: 'var(--font-serif)', fontSize: 12, letterSpacing: 4, textIndent: 4,
                   color: activeTab === tab ? 'var(--gold)' : 'var(--ink-dim)',
                   borderBottom: activeTab === tab ? '1px solid var(--gold)' : '1px solid transparent',
                   marginBottom: -1, transition: 'color 0.2s',
+                  position: 'relative',
                 }}>
-                {tab === 'chat' ? '问道' : '法器'}
+                {tab === 'chat' ? '问道' : tab === 'tools' ? '法器' : tab === 'skills' ? '技能' : '偏好'}
+                {tab === 'skills' && skillNeedsSync && (
+                  <span style={{
+                    position: 'absolute', top: 7, right: 6,
+                    width: 5, height: 5, borderRadius: '50%',
+                    background: 'var(--gold-dim)',
+                  }} />
+                )}
               </button>
             ))}
           </div>
@@ -1026,7 +399,6 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                 }}>加载中…</div>
               ) : (
                 <>
-                  {/* 内置法术 */}
                   <div style={{ padding: '14px 16px 6px', fontFamily: 'var(--font-serif)',
                     fontSize: 10, color: 'var(--ink-dim)', letterSpacing: 3, flexShrink: 0,
                   }}>
@@ -1047,7 +419,6 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                     </div>
                   ))}
 
-                  {/* MCP 法器 */}
                   {mcpData.adapters.length > 0 && (
                     <>
                       <div style={{ padding: '16px 16px 6px', fontFamily: 'var(--font-serif)',
@@ -1096,7 +467,6 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                     </>
                   )}
 
-                  {/* 无 MCP 提示 */}
                   {mcpData.adapters.length === 0 && (
                     <div style={{ padding: '16px 16px 8px', borderTop: '1px solid var(--ink-trace)',
                       fontFamily: 'var(--font-serif)', fontSize: 11, color: 'var(--ink-trace)',
@@ -1109,7 +479,6 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                 </>
               )}
 
-              {/* 安装框 */}
               {mcpData?.allowDynamicInstall && (
                 <div style={{
                   marginTop: 'auto', borderTop: '1px solid var(--ink-trace)',
@@ -1146,37 +515,941 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
             </div>
           )}
 
-          {/* 消息区（仅问道 tab）*/}
-          {activeTab === 'chat' && <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px' }}>
-            {messages.length === 0 && (
-              <div style={{
-                fontFamily: 'var(--font-serif)', fontSize: 13, color: 'var(--ink-dim)',
-                letterSpacing: 2, textAlign: 'center', marginTop: 72, lineHeight: 3,
-              }}>
-                器灵在此<br/>
-                <span style={{ fontSize: 10, color: 'var(--ink-trace)', letterSpacing: 1 }}>输入 / 查看快捷命令</span>
+          {/* ── 技能 Tab ── */}
+          {activeTab === 'skills' && (() => {
+            const allTags = Array.from(new Set(skillCards.flatMap(c => c.tags))).sort()
+            const filtered = skillTagFilter
+              ? skillCards.filter(c => c.tags.includes(skillTagFilter))
+              : skillCards
+
+            return (
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+                {/* 顶部操作栏 */}
+                <div style={{
+                  padding: '10px 16px 8px',
+                  borderBottom: '1px solid var(--ink-trace)',
+                  flexShrink: 0,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={{
+                        fontFamily: 'var(--font-serif)', fontSize: 10,
+                        color: extractResult
+                          ? (extractResult.includes('新增') ? 'var(--jade)' : 'var(--ink-dim)')
+                          : 'var(--ink-dim)',
+                        letterSpacing: 2,
+                        transition: 'color 0.3s',
+                      }}>
+                        {extractResult ?? `共 ${skillsTotal} 张技能卡`}
+                      </span>
+                      {lastExtracted && (
+                        <span style={{
+                          fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--ink-trace)',
+                        }}>
+                          上次提炼 {lastExtracted}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={extractNow}
+                      disabled={extracting}
+                      style={{
+                        background: 'none',
+                        border: `1px solid ${extracting ? 'var(--ink-trace)' : 'var(--gold-dim)'}`,
+                        borderRadius: 2, padding: '3px 10px',
+                        cursor: extracting ? 'default' : 'pointer',
+                        fontFamily: 'var(--font-serif)', fontSize: 10,
+                        color: extracting ? 'var(--ink-trace)' : 'var(--gold-dim)',
+                        letterSpacing: 2, transition: 'color 0.2s',
+                        display: 'flex', alignItems: 'center', gap: 5,
+                      }}
+                    >
+                      {extracting && (
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%',
+                          border: '1px solid var(--ink-trace)',
+                          borderTopColor: 'var(--gold-dim)',
+                          display: 'inline-block',
+                          animation: 'spin 0.8s linear infinite',
+                        }} />
+                      )}
+                      {extracting ? '提炼中' : '立即提炼'}
+                    </button>
+                    <button onClick={loadSkills} style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      fontSize: 12, color: 'var(--ink-trace)', padding: '2px 4px',
+                    }}>↺</button>
+                  </div>
+
+                  {/* Tag 筛选 */}
+                  {allTags.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      <button
+                        onClick={() => setSkillTagFilter(null)}
+                        style={{
+                          background: skillTagFilter === null ? 'rgba(212,168,67,0.12)' : 'none',
+                          border: '1px solid var(--ink-trace)', borderRadius: 2,
+                          padding: '1px 7px', cursor: 'pointer',
+                          fontFamily: 'var(--font-serif)', fontSize: 9,
+                          color: skillTagFilter === null ? 'var(--gold-dim)' : 'var(--ink-trace)',
+                          letterSpacing: 1,
+                        }}
+                      >
+                        全部
+                      </button>
+                      {allTags.map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => setSkillTagFilter(skillTagFilter === tag ? null : tag)}
+                          style={{
+                            background: skillTagFilter === tag ? 'rgba(212,168,67,0.12)' : 'none',
+                            border: '1px solid var(--ink-trace)', borderRadius: 2,
+                            padding: '1px 7px', cursor: 'pointer',
+                            fontFamily: 'var(--font-serif)', fontSize: 9,
+                            color: skillTagFilter === tag ? 'var(--gold-dim)' : 'var(--ink-trace)',
+                            letterSpacing: 1,
+                          }}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 卡片列表 */}
+                {skillsLoading && (
+                  <div style={{
+                    padding: '32px 16px', textAlign: 'center',
+                    fontFamily: 'var(--font-serif)', fontSize: 11,
+                    color: 'var(--ink-trace)', letterSpacing: 2,
+                  }}>
+                    读取中…
+                  </div>
+                )}
+
+                {!skillsLoading && filtered.length === 0 && (
+                  <div style={{
+                    padding: '40px 20px', textAlign: 'center',
+                    fontFamily: 'var(--font-serif)', fontSize: 11,
+                    color: 'var(--ink-trace)', letterSpacing: 2, lineHeight: 2.5,
+                  }}>
+                    {skillsTotal === 0 ? (
+                      <>尚无技能卡<br/>
+                        <span style={{ fontSize: 10 }}>
+                          {skillNeedsSync ? '点击「立即提炼」生成' : '本周已提炼，对话积累后自动更新'}
+                        </span>
+                      </>
+                    ) : '该标签下暂无卡片'}
+                  </div>
+                )}
+
+                <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {filtered.map(card => {
+                    const isEditing  = editingId  === card.id
+                    const isDeleting = deletingId === card.id
+                    return (
+                      <div key={card.id} style={{
+                        background: 'linear-gradient(135deg, rgba(212,168,67,0.05) 0%, transparent 100%)',
+                        border: `1px solid ${isEditing ? 'rgba(212,168,67,0.45)' : 'rgba(212,168,67,0.2)'}`,
+                        borderLeft: '2px solid var(--gold-dim)',
+                        borderRadius: 2, padding: '10px 12px',
+                        transition: 'border-color 0.2s',
+                      }}>
+                        {/* ── 标题行 ── */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: isEditing ? 8 : 5 }}>
+                          {isEditing ? (
+                            <input
+                              value={editDraft.title}
+                              onChange={e => setEditDraft(d => ({ ...d, title: e.target.value }))}
+                              placeholder="标题（≤20字）"
+                              style={{
+                                flex: 1, background: 'var(--deep)',
+                                border: '1px solid var(--ink-trace)', borderRadius: 2,
+                                padding: '3px 7px', fontFamily: 'var(--font-xiaowei), serif',
+                                fontSize: 13, color: 'var(--gold)', letterSpacing: 2, outline: 'none',
+                              }}
+                            />
+                          ) : (
+                            <span style={{
+                              fontFamily: 'var(--font-xiaowei), serif',
+                              fontSize: 13, color: 'var(--gold)',
+                              letterSpacing: 2, flex: 1,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>
+                              {card.title}
+                            </span>
+                          )}
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--ink-trace)', flexShrink: 0 }}>
+                            {card.sourceDate}
+                          </span>
+                          {isEditing ? (
+                            <>
+                              <button
+                                onClick={() => saveEdit(card.id)}
+                                disabled={savingEdit || !editDraft.title.trim()}
+                                style={{
+                                  background: 'none', border: '1px solid var(--jade)',
+                                  borderRadius: 2, padding: '1px 7px', cursor: 'pointer',
+                                  fontFamily: 'var(--font-serif)', fontSize: 9,
+                                  color: 'var(--jade)', letterSpacing: 1, flexShrink: 0,
+                                  opacity: savingEdit || !editDraft.title.trim() ? 0.4 : 1,
+                                }}
+                              >{savingEdit ? '保存中' : '保存'}</button>
+                              <button
+                                onClick={() => setEditingId(null)}
+                                style={{
+                                  background: 'none', border: 'none', cursor: 'pointer',
+                                  fontFamily: 'var(--font-serif)', fontSize: 9,
+                                  color: 'var(--ink-trace)', padding: '1px 4px',
+                                }}
+                              >取消</button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setEditingId(card.id)
+                                  setDeletingId(null)
+                                  setEditDraft({
+                                    title:     card.title,
+                                    insight:   card.insight,
+                                    body:      card.body ?? '',
+                                    tags:      card.tags.join(', '),
+                                    userNotes: card.userNotes ?? '',
+                                  })
+                                }}
+                                title="编辑"
+                                style={{
+                                  background: 'none', border: 'none', cursor: 'pointer',
+                                  fontSize: 11, color: 'var(--ink-trace)', padding: '1px 3px',
+                                  flexShrink: 0, lineHeight: 1,
+                                }}
+                              >✎</button>
+                              <button
+                                onClick={() => setDeletingId(isDeleting ? null : card.id)}
+                                title="删除"
+                                style={{
+                                  background: 'none', border: 'none', cursor: 'pointer',
+                                  fontSize: 13, color: isDeleting ? 'var(--vermilion, #c0392b)' : 'var(--ink-trace)',
+                                  padding: '1px 3px', flexShrink: 0, lineHeight: 1,
+                                }}
+                              >×</button>
+                            </>
+                          )}
+                        </div>
+
+                        {/* ── 摘要（编辑/只读）── */}
+                        {isEditing ? (
+                          <textarea
+                            value={editDraft.insight}
+                            onChange={e => setEditDraft(d => ({ ...d, insight: e.target.value }))}
+                            placeholder="一句话摘要（≤50字，用于列表预览）"
+                            rows={2}
+                            style={{
+                              width: '100%', boxSizing: 'border-box',
+                              background: 'var(--deep)', border: '1px solid var(--ink-trace)',
+                              borderRadius: 2, padding: '5px 7px',
+                              fontFamily: 'var(--font-serif)', fontSize: 11,
+                              color: 'var(--ink-dim)', lineHeight: 1.75, letterSpacing: 0.3,
+                              resize: 'vertical', outline: 'none', marginBottom: 7,
+                            }}
+                          />
+                        ) : (
+                          <div style={{
+                            fontFamily: 'var(--font-serif)', fontSize: 11,
+                            color: 'var(--ink-dim)', lineHeight: 1.75, letterSpacing: 0.3,
+                            marginBottom: card.body ? 4 : 7,
+                          }}>
+                            {card.insight}
+                          </div>
+                        )}
+
+                        {/* ── Body 展开/折叠（只读）── */}
+                        {!isEditing && card.body && (
+                          <>
+                            <button
+                              onClick={() => setExpandedSkillId(expandedSkillId === card.id ? null : card.id)}
+                              style={{
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: 4,
+                                fontFamily: 'var(--font-serif)', fontSize: 9,
+                                color: 'var(--gold-dim)', letterSpacing: 1,
+                                padding: '2px 0', marginBottom: 5,
+                              }}
+                            >
+                              <span style={{
+                                display: 'inline-block',
+                                transform: expandedSkillId === card.id ? 'rotate(90deg)' : 'rotate(0deg)',
+                                transition: 'transform 0.15s',
+                                fontSize: 8,
+                              }}>▶</span>
+                              {expandedSkillId === card.id ? '收起全文' : '展开全文'}
+                            </button>
+                            {expandedSkillId === card.id && (
+                              <div style={{
+                                borderTop: '1px solid var(--ink-trace)',
+                                paddingTop: 12, marginBottom: 8,
+                                fontFamily: 'var(--font-serif)',
+                              }}>
+                                <ReactMarkdown
+                                  components={{
+                                    h2: ({ children }) => (
+                                      <h2 style={{
+                                        fontFamily: 'var(--font-xiaowei), serif',
+                                        fontSize: 12, color: 'var(--gold)',
+                                        letterSpacing: 2, margin: '14px 0 6px',
+                                        borderBottom: '1px solid rgba(212,168,67,0.2)',
+                                        paddingBottom: 3,
+                                      }}>{children}</h2>
+                                    ),
+                                    h3: ({ children }) => (
+                                      <h3 style={{
+                                        fontFamily: 'var(--font-xiaowei), serif',
+                                        fontSize: 11, color: 'var(--gold-dim)',
+                                        letterSpacing: 1.5, margin: '10px 0 4px',
+                                      }}>{children}</h3>
+                                    ),
+                                    p: ({ children }) => (
+                                      <p style={{
+                                        fontSize: 11, color: 'var(--ink-mid)',
+                                        lineHeight: 1.8, letterSpacing: 0.3,
+                                        margin: '4px 0 8px',
+                                      }}>{children}</p>
+                                    ),
+                                    li: ({ children }) => (
+                                      <li style={{
+                                        fontSize: 11, color: 'var(--ink-mid)',
+                                        lineHeight: 1.75, letterSpacing: 0.3,
+                                        margin: '2px 0',
+                                      }}>{children}</li>
+                                    ),
+                                    ul: ({ children }) => (
+                                      <ul style={{ paddingLeft: 16, margin: '4px 0 8px' }}>{children}</ul>
+                                    ),
+                                    ol: ({ children }) => (
+                                      <ol style={{ paddingLeft: 16, margin: '4px 0 8px' }}>{children}</ol>
+                                    ),
+                                    code: ({ children, className }) => {
+                                      const isBlock = className?.includes('language-')
+                                      return isBlock ? (
+                                        <pre style={{
+                                          background: 'var(--void)',
+                                          border: '1px solid var(--ink-trace)',
+                                          borderRadius: 2, padding: '8px 10px',
+                                          overflowX: 'auto', margin: '6px 0',
+                                        }}>
+                                          <code style={{
+                                            fontFamily: 'var(--font-mono)',
+                                            fontSize: 10, color: 'var(--ink-mid)',
+                                            letterSpacing: 0.3,
+                                          }}>{children}</code>
+                                        </pre>
+                                      ) : (
+                                        <code style={{
+                                          fontFamily: 'var(--font-mono)',
+                                          fontSize: 10, color: 'var(--gold-dim)',
+                                          background: 'rgba(212,168,67,0.08)',
+                                          padding: '1px 4px', borderRadius: 2,
+                                        }}>{children}</code>
+                                      )
+                                    },
+                                    blockquote: ({ children }) => (
+                                      <blockquote style={{
+                                        borderLeft: '2px solid var(--gold-dim)',
+                                        paddingLeft: 10, margin: '6px 0',
+                                        color: 'var(--ink-trace)',
+                                        fontStyle: 'italic',
+                                      }}>{children}</blockquote>
+                                    ),
+                                  }}
+                                >
+                                  {card.body!}
+                                </ReactMarkdown>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {/* ── Body 编辑框（仅编辑模式）── */}
+                        {isEditing && (
+                          <div style={{ marginBottom: 7 }}>
+                            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 9, color: 'var(--ink-trace)', letterSpacing: 1, marginBottom: 4 }}>
+                              完整内容（Markdown，可留空）
+                            </div>
+                            <textarea
+                              value={editDraft.body}
+                              onChange={e => setEditDraft(d => ({ ...d, body: e.target.value }))}
+                              placeholder="## 背景&#10;&#10;## 核心概念&#10;&#10;## 方案&#10;&#10;## 注意事项"
+                              rows={8}
+                              style={{
+                                width: '100%', boxSizing: 'border-box',
+                                background: 'var(--deep)', border: '1px solid var(--ink-trace)',
+                                borderRadius: 2, padding: '5px 7px',
+                                fontFamily: 'var(--font-mono)', fontSize: 10,
+                                color: 'var(--ink-mid)', lineHeight: 1.7, letterSpacing: 0.2,
+                                resize: 'vertical', outline: 'none',
+                              }}
+                            />
+                          </div>
+                        )}
+
+                        {/* ── Tags（编辑/只读）── */}
+                        {isEditing ? (
+                          <input
+                            value={editDraft.tags}
+                            onChange={e => setEditDraft(d => ({ ...d, tags: e.target.value }))}
+                            placeholder="标签（逗号分隔）"
+                            style={{
+                              width: '100%', boxSizing: 'border-box',
+                              background: 'var(--deep)', border: '1px solid var(--ink-trace)',
+                              borderRadius: 2, padding: '3px 7px',
+                              fontFamily: 'var(--font-mono)', fontSize: 10,
+                              color: 'var(--gold-dim)', outline: 'none', marginBottom: 7,
+                            }}
+                          />
+                        ) : (
+                          card.tags.length > 0 && (
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', marginBottom: 0 }}>
+                              {card.tags.map(tag => (
+                                <button
+                                  key={tag}
+                                  onClick={() => setSkillTagFilter(tag)}
+                                  style={{
+                                    background: 'none',
+                                    border: '1px solid rgba(212,168,67,0.18)',
+                                    borderRadius: 2, padding: '1px 6px',
+                                    cursor: 'pointer',
+                                    fontFamily: 'var(--font-serif)', fontSize: 9,
+                                    color: 'var(--gold-dim)', letterSpacing: 1,
+                                  }}
+                                >
+                                  {tag}
+                                </button>
+                              ))}
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--ink-trace)', marginLeft: 'auto' }}>
+                                #{card.useCount}
+                              </span>
+                            </div>
+                          )
+                        )}
+
+                        {/* ── 我的想法（编辑时 / 只读时展示已有内容）── */}
+                        {isEditing ? (
+                          <div style={{ marginTop: 7 }}>
+                            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 9, color: 'var(--ink-trace)', letterSpacing: 1, marginBottom: 4 }}>
+                              我的想法（将纳入下次提炼参考）
+                            </div>
+                            <textarea
+                              value={editDraft.userNotes}
+                              onChange={e => setEditDraft(d => ({ ...d, userNotes: e.target.value }))}
+                              placeholder="对这条洞察的补充、修正或想法…"
+                              rows={2}
+                              style={{
+                                width: '100%', boxSizing: 'border-box',
+                                background: 'var(--deep)', border: '1px solid var(--ink-trace)',
+                                borderRadius: 2, padding: '5px 7px',
+                                fontFamily: 'var(--font-serif)', fontSize: 10,
+                                color: 'var(--ink-dim)', lineHeight: 1.65, letterSpacing: 0.3,
+                                resize: 'vertical', outline: 'none',
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          card.userNotes?.trim() && (
+                            <div style={{
+                              marginTop: 7, paddingTop: 7,
+                              borderTop: '1px dashed rgba(212,168,67,0.15)',
+                              fontFamily: 'var(--font-serif)', fontSize: 10,
+                              color: 'var(--ink-trace)', lineHeight: 1.6, letterSpacing: 0.3,
+                              fontStyle: 'italic',
+                            }}>
+                              <span style={{ color: 'var(--gold-dim)', fontStyle: 'normal', marginRight: 4 }}>〝</span>
+                              {card.userNotes}
+                              <span style={{ color: 'var(--gold-dim)', fontStyle: 'normal', marginLeft: 4 }}>〞</span>
+                            </div>
+                          )
+                        )}
+
+                        {/* ── 删除确认 ── */}
+                        {isDeleting && (
+                          <div style={{
+                            marginTop: 10, paddingTop: 8,
+                            borderTop: '1px solid rgba(192,57,43,0.25)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          }}>
+                            <span style={{ fontFamily: 'var(--font-serif)', fontSize: 10, color: 'var(--ink-dim)', letterSpacing: 1 }}>
+                              确认删除此技能卡？
+                            </span>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button
+                                onClick={() => deleteCard(card.id)}
+                                style={{
+                                  background: 'rgba(192,57,43,0.12)', border: '1px solid rgba(192,57,43,0.4)',
+                                  borderRadius: 2, padding: '2px 9px', cursor: 'pointer',
+                                  fontFamily: 'var(--font-serif)', fontSize: 9,
+                                  color: '#c0392b', letterSpacing: 1,
+                                }}
+                              >删除</button>
+                              <button
+                                onClick={() => setDeletingId(null)}
+                                style={{
+                                  background: 'none', border: '1px solid var(--ink-trace)',
+                                  borderRadius: 2, padding: '2px 9px', cursor: 'pointer',
+                                  fontFamily: 'var(--font-serif)', fontSize: 9,
+                                  color: 'var(--ink-dim)', letterSpacing: 1,
+                                }}
+                              >取消</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {skillNeedsSync && !extracting && filtered.length > 0 && (
+                  <div style={{
+                    marginTop: 'auto', flexShrink: 0,
+                    borderTop: '1px solid var(--ink-trace)',
+                    padding: '8px 16px',
+                    fontFamily: 'var(--font-serif)', fontSize: 9,
+                    color: 'var(--gold-dim)', letterSpacing: 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  }}>
+                    <span>本周尚未提炼</span>
+                    <button onClick={extractNow} style={{
+                      background: 'none', border: '1px solid var(--gold-dim)',
+                      borderRadius: 2, padding: '2px 8px', cursor: 'pointer',
+                      fontFamily: 'var(--font-serif)', fontSize: 9,
+                      color: 'var(--gold-dim)', letterSpacing: 1,
+                    }}>
+                      立即提炼
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+            )
+          })()}
 
-            {messages.map((msg, i) => (
-              <div key={i} style={{ marginBottom: 18 }}>
-                <MessageItem
-                  msg={msg}
-                  isLast={i === messages.length - 1}
-                  loading={loading}
-                  phase={phase}
-                  onPermission={msg.role === 'assistant' && msg.permissionRequest && !msg.permissionRequest.resolved
-                    ? (d) => handlePermission(i, d, msg.permissionRequest!.token)
-                    : undefined}
-                />
+          {/* ── 偏好 Tab ── */}
+          {activeTab === 'prefs' && (() => {
+            const cats = Array.from(new Set(prefs.map(p => p.category))).sort()
+            const filtered = prefCatFilter
+              ? prefs.filter(p => p.category === prefCatFilter)
+              : prefs
+
+            return (
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+                {/* 顶部操作栏 */}
+                <div style={{
+                  padding: '10px 16px 8px',
+                  borderBottom: '1px solid var(--ink-trace)',
+                  flexShrink: 0,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{
+                      flex: 1,
+                      fontFamily: 'var(--font-serif)', fontSize: 10,
+                      color: prefResult
+                        ? (prefResult.includes('更新') ? 'var(--jade)' : 'var(--ink-dim)')
+                        : 'var(--ink-dim)',
+                      letterSpacing: 2,
+                      transition: 'color 0.3s',
+                    }}>
+                      {prefResult ?? `共 ${prefsTotal} 条偏好`}
+                    </span>
+                    <button
+                      onClick={extractPrefsNow}
+                      disabled={prefExtracting}
+                      style={{
+                        background: 'none',
+                        border: `1px solid ${prefExtracting ? 'var(--ink-trace)' : 'var(--gold-dim)'}`,
+                        borderRadius: 2, padding: '3px 10px',
+                        cursor: prefExtracting ? 'default' : 'pointer',
+                        fontFamily: 'var(--font-serif)', fontSize: 10,
+                        color: prefExtracting ? 'var(--ink-trace)' : 'var(--gold-dim)',
+                        letterSpacing: 2, transition: 'color 0.2s',
+                        display: 'flex', alignItems: 'center', gap: 5,
+                      }}
+                    >
+                      {prefExtracting && (
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%',
+                          border: '1px solid var(--ink-trace)',
+                          borderTopColor: 'var(--gold-dim)',
+                          display: 'inline-block',
+                          animation: 'spin 0.8s linear infinite',
+                        }} />
+                      )}
+                      {prefExtracting ? '提炼中' : '立即提炼'}
+                    </button>
+                    <button onClick={loadPrefs} style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      fontSize: 12, color: 'var(--ink-trace)', padding: '2px 4px',
+                    }}>↺</button>
+                  </div>
+
+                  {/* 分类筛选 */}
+                  {cats.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      <button
+                        onClick={() => setPrefCatFilter(null)}
+                        style={{
+                          background: prefCatFilter === null ? 'rgba(212,168,67,0.12)' : 'none',
+                          border: '1px solid var(--ink-trace)', borderRadius: 2,
+                          padding: '1px 7px', cursor: 'pointer',
+                          fontFamily: 'var(--font-serif)', fontSize: 9,
+                          color: prefCatFilter === null ? 'var(--gold-dim)' : 'var(--ink-trace)',
+                          letterSpacing: 1,
+                        }}
+                      >全部</button>
+                      {cats.map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => setPrefCatFilter(prefCatFilter === cat ? null : cat)}
+                          style={{
+                            background: prefCatFilter === cat ? 'rgba(212,168,67,0.12)' : 'none',
+                            border: '1px solid var(--ink-trace)', borderRadius: 2,
+                            padding: '1px 7px', cursor: 'pointer',
+                            fontFamily: 'var(--font-serif)', fontSize: 9,
+                            color: prefCatFilter === cat ? 'var(--gold-dim)' : 'var(--ink-trace)',
+                            letterSpacing: 1,
+                          }}
+                        >{PREF_CATEGORY_LABEL[cat] ?? cat}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 加载中 */}
+                {prefsLoading && (
+                  <div style={{
+                    padding: '32px 16px', textAlign: 'center',
+                    fontFamily: 'var(--font-serif)', fontSize: 11,
+                    color: 'var(--ink-trace)', letterSpacing: 2,
+                  }}>读取中…</div>
+                )}
+
+                {/* 空状态 */}
+                {!prefsLoading && filtered.length === 0 && (
+                  <div style={{
+                    padding: '40px 20px', textAlign: 'center',
+                    fontFamily: 'var(--font-serif)', fontSize: 11,
+                    color: 'var(--ink-trace)', letterSpacing: 2, lineHeight: 2.5,
+                  }}>
+                    {prefsTotal === 0 ? (
+                      <>尚无偏好记录<br/>
+                        <span style={{ fontSize: 10 }}>对话积累后点击「立即提炼」生成</span>
+                      </>
+                    ) : '该分类下暂无记录'}
+                  </div>
+                )}
+
+                {/* 偏好列表 */}
+                <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {filtered.map(pref => {
+                    const isEditing  = editingPrefId  === pref.id
+                    const isDeleting = deletingPrefId === pref.id
+                    // 置信度颜色：高 = jade，中 = gold-dim，低 = ink-dim
+                    const confColor = pref.confidence >= 0.7 ? 'var(--jade)'
+                      : pref.confidence >= 0.4 ? 'var(--gold-dim)' : 'var(--ink-dim)'
+                    const confBars  = Math.round(pref.confidence * 5)
+
+                    return (
+                      <div key={pref.id} style={{
+                        background: 'rgba(212,168,67,0.03)',
+                        border: `1px solid ${isEditing ? 'rgba(212,168,67,0.4)' : 'var(--ink-trace)'}`,
+                        borderLeft: `2px solid ${confColor}`,
+                        borderRadius: 2, padding: '9px 12px',
+                        transition: 'border-color 0.2s',
+                      }}>
+                        {/* 标题行：分类 + 置信度 + 操作 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                          <span style={{
+                            fontFamily: 'var(--font-serif)', fontSize: 9,
+                            color: 'var(--ink-trace)', letterSpacing: 1,
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid var(--ink-trace)',
+                            borderRadius: 2, padding: '1px 5px',
+                            flexShrink: 0,
+                          }}>
+                            {PREF_CATEGORY_LABEL[pref.category] ?? pref.category}
+                          </span>
+                          {/* 置信度圆点 */}
+                          <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                            {Array.from({ length: 5 }).map((_, i) => (
+                              <span key={i} style={{
+                                width: 5, height: 5, borderRadius: '50%',
+                                background: i < confBars ? confColor : 'var(--ink-trace)',
+                                display: 'inline-block',
+                              }} />
+                            ))}
+                          </div>
+                          <span style={{
+                            fontFamily: 'var(--font-mono)', fontSize: 8,
+                            color: 'var(--ink-trace)', marginLeft: 2,
+                          }}>
+                            {Math.round(pref.confidence * 100)}%
+                          </span>
+                          <span style={{ flex: 1 }} />
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--ink-trace)', flexShrink: 0 }}>
+                            {pref.lastSeen}
+                          </span>
+                          {isEditing ? (
+                            <>
+                              <button
+                                onClick={() => savePrefEdit(pref.id)}
+                                disabled={!prefDraft.description.trim()}
+                                style={{
+                                  background: 'none', border: '1px solid var(--jade)',
+                                  borderRadius: 2, padding: '1px 7px', cursor: 'pointer',
+                                  fontFamily: 'var(--font-serif)', fontSize: 9,
+                                  color: 'var(--jade)', letterSpacing: 1, flexShrink: 0,
+                                  opacity: prefDraft.description.trim() ? 1 : 0.4,
+                                }}
+                              >保存</button>
+                              <button
+                                onClick={() => setEditingPrefId(null)}
+                                style={{
+                                  background: 'none', border: 'none', cursor: 'pointer',
+                                  fontFamily: 'var(--font-serif)', fontSize: 9,
+                                  color: 'var(--ink-trace)', padding: '1px 4px',
+                                }}
+                              >取消</button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setEditingPrefId(pref.id)
+                                  setDeletingPrefId(null)
+                                  setPrefDraft({ description: pref.description, confidence: pref.confidence })
+                                }}
+                                title="编辑"
+                                style={{
+                                  background: 'none', border: 'none', cursor: 'pointer',
+                                  fontSize: 11, color: 'var(--ink-trace)', padding: '1px 3px', flexShrink: 0,
+                                }}
+                              >✎</button>
+                              <button
+                                onClick={() => setDeletingPrefId(isDeleting ? null : pref.id)}
+                                title="删除"
+                                style={{
+                                  background: 'none', border: 'none', cursor: 'pointer',
+                                  fontSize: 13,
+                                  color: isDeleting ? 'var(--vermilion, #c0392b)' : 'var(--ink-trace)',
+                                  padding: '1px 3px', flexShrink: 0,
+                                }}
+                              >×</button>
+                            </>
+                          )}
+                        </div>
+
+                        {/* 描述 */}
+                        {isEditing ? (
+                          <textarea
+                            value={prefDraft.description}
+                            onChange={e => setPrefDraft(d => ({ ...d, description: e.target.value }))}
+                            rows={2}
+                            style={{
+                              width: '100%', boxSizing: 'border-box',
+                              background: 'var(--deep)', border: '1px solid var(--ink-trace)',
+                              borderRadius: 2, padding: '5px 7px',
+                              fontFamily: 'var(--font-serif)', fontSize: 11,
+                              color: 'var(--ink-dim)', lineHeight: 1.75, letterSpacing: 0.3,
+                              resize: 'vertical', outline: 'none', marginBottom: 7,
+                            }}
+                          />
+                        ) : (
+                          <div style={{
+                            fontFamily: 'var(--font-serif)', fontSize: 11,
+                            color: 'var(--ink-dim)', lineHeight: 1.75, letterSpacing: 0.3,
+                            marginBottom: pref.counterEvidence ? 6 : 0,
+                          }}>
+                            {pref.description}
+                          </div>
+                        )}
+
+                        {/* 置信度调节（编辑时） */}
+                        {isEditing && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            <span style={{ fontFamily: 'var(--font-serif)', fontSize: 9, color: 'var(--ink-trace)', letterSpacing: 1 }}>
+                              置信度
+                            </span>
+                            <input
+                              type="range" min={0} max={1} step={0.05}
+                              value={prefDraft.confidence}
+                              onChange={e => setPrefDraft(d => ({ ...d, confidence: parseFloat(e.target.value) }))}
+                              style={{ flex: 1, accentColor: 'var(--gold-dim)' }}
+                            />
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--gold-dim)', width: 28, textAlign: 'right' }}>
+                              {Math.round(prefDraft.confidence * 100)}%
+                            </span>
+                          </div>
+                        )}
+
+                        {/* 反例（如有） */}
+                        {!isEditing && pref.counterEvidence && (
+                          <div style={{
+                            fontFamily: 'var(--font-serif)', fontSize: 9,
+                            color: 'var(--ink-trace)', lineHeight: 1.6,
+                            fontStyle: 'italic',
+                          }}>
+                            反例：{pref.counterEvidence}
+                          </div>
+                        )}
+
+                        {/* 删除确认 */}
+                        {isDeleting && (
+                          <div style={{
+                            marginTop: 10, paddingTop: 8,
+                            borderTop: '1px solid rgba(192,57,43,0.25)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          }}>
+                            <span style={{ fontFamily: 'var(--font-serif)', fontSize: 10, color: 'var(--ink-dim)', letterSpacing: 1 }}>
+                              确认删除此偏好记录？
+                            </span>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button
+                                onClick={() => deletePref(pref.id)}
+                                style={{
+                                  background: 'rgba(192,57,43,0.12)', border: '1px solid rgba(192,57,43,0.4)',
+                                  borderRadius: 2, padding: '2px 9px', cursor: 'pointer',
+                                  fontFamily: 'var(--font-serif)', fontSize: 9,
+                                  color: '#c0392b', letterSpacing: 1,
+                                }}
+                              >删除</button>
+                              <button
+                                onClick={() => setDeletingPrefId(null)}
+                                style={{
+                                  background: 'none', border: '1px solid var(--ink-trace)',
+                                  borderRadius: 2, padding: '2px 9px', cursor: 'pointer',
+                                  fontFamily: 'var(--font-serif)', fontSize: 9,
+                                  color: 'var(--ink-dim)', letterSpacing: 1,
+                                }}
+                              >取消</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-            ))}
+            )
+          })()}
 
-            <div ref={bottomRef} />
-          </div>}
+          {/* ── 日期 Tab 条（问道 tab，有历史记录时显示）── */}
+          {activeTab === 'chat' && historyDates.length > 1 && (
+            <div style={{
+              display: 'flex',
+              overflowX: 'auto',
+              borderBottom: '1px solid var(--ink-trace)',
+              flexShrink: 0,
+              scrollbarWidth: 'none',
+            }}>
+              {historyDates.map(date => {
+                const active = isToday ? date === todayStr() : date === viewDate
+                return (
+                  <button
+                    key={date}
+                    onClick={() => setViewDate(date === todayStr() ? null : date)}
+                    style={{
+                      flexShrink: 0,
+                      padding: '6px 12px',
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 10,
+                      color: active ? 'var(--gold)' : 'var(--ink-trace)',
+                      borderBottom: active ? '1px solid var(--gold)' : '1px solid transparent',
+                      marginBottom: -1,
+                      transition: 'color 0.15s',
+                      letterSpacing: 0.5,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {dateLabel(date)}
+                  </button>
+                )
+              })}
+            </div>
+          )}
 
-          {/* 上下文徽章列（仅问道 tab）*/}
-          {activeTab === 'chat' && (contexts.length > 0 || ctxLoading) && (
+          {/* ── 消息区（仅问道 tab）── */}
+          {activeTab === 'chat' && (
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px' }}>
+              {pastLoading && (
+                <div style={{
+                  textAlign: 'center', paddingTop: 48,
+                  fontFamily: 'var(--font-serif)', fontSize: 12,
+                  color: 'var(--ink-trace)', letterSpacing: 2,
+                }}>
+                  读取中…
+                </div>
+              )}
+              {!pastLoading && displayMessages.length === 0 && (
+                <div style={{
+                  fontFamily: 'var(--font-serif)', fontSize: 13, color: 'var(--ink-dim)',
+                  letterSpacing: 2, textAlign: 'center', marginTop: 72, lineHeight: 3,
+                }}>
+                  {isToday ? (
+                    <>器灵在此<br/>
+                      <span style={{ fontSize: 10, color: 'var(--ink-trace)', letterSpacing: 1 }}>输入 / 查看快捷命令</span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 11, color: 'var(--ink-trace)' }}>当日无记录</span>
+                  )}
+                </div>
+              )}
+
+              {!pastLoading && displayMessages.map((msg, i) => (
+                <div key={i} style={{ marginBottom: 18 }}>
+                  <MessageItem
+                    msg={msg}
+                    isLast={isToday && i === displayMessages.length - 1}
+                    loading={isToday && loading}
+                    phase={isToday ? phase : 'idle'}
+                    onPermission={isToday && msg.role === 'assistant' && msg.permissionRequest && !msg.permissionRequest.resolved
+                      ? (d) => handlePermission(i, d, msg.permissionRequest!.token)
+                      : undefined}
+                  />
+                </div>
+              ))}
+
+              <div ref={bottomRef} />
+            </div>
+          )}
+
+          {/* ── 历史模式提示条 ── */}
+          {activeTab === 'chat' && !isToday && (
+            <div style={{
+              borderTop: '1px solid var(--ink-trace)',
+              padding: '8px 16px',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              background: 'var(--deep)', flexShrink: 0,
+            }}>
+              <span style={{ fontFamily: 'var(--font-serif)', fontSize: 10, color: 'var(--ink-trace)', letterSpacing: 1 }}>
+                历史记录 · {viewDate}
+              </span>
+              <button
+                onClick={() => setViewDate(null)}
+                style={{
+                  background: 'none', border: '1px solid var(--ink-trace)', borderRadius: 2,
+                  padding: '2px 8px', cursor: 'pointer',
+                  fontFamily: 'var(--font-serif)', fontSize: 10,
+                  color: 'var(--gold-dim)', letterSpacing: 1,
+                }}
+              >
+                返回今日
+              </button>
+            </div>
+          )}
+
+          {/* ── 上下文徽章列（仅问道 tab）── */}
+          {activeTab === 'chat' && isToday && (contexts.length > 0 || ctxLoading) && (
             <div style={{
               display: 'flex', flexWrap: 'wrap', gap: 4,
               padding: '6px 12px', borderTop: '1px solid var(--ink-trace)',
@@ -1213,65 +1486,66 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
             </div>
           )}
 
-          {/* 输入区（仅问道 tab）*/}
-          {activeTab === 'chat' && <div style={{ borderTop: '1px solid var(--ink-trace)', position: 'relative', flexShrink: 0 }}>
-            {/* slash 菜单 */}
-            {cmdMenu && filteredCmds.length > 0 && (
-              <div style={{
-                position: 'absolute', bottom: '100%', left: 0, right: 0,
-                background: 'var(--deep)', border: '1px solid var(--ink-trace)', borderBottom: 'none',
-                maxHeight: 260, overflowY: 'auto',
-              }}>
-                {filteredCmds.map((c, idx) => (
-                  <button
-                    key={c.cmd}
-                    onMouseDown={e => { e.preventDefault(); selectCmd(c) }}
-                    onMouseEnter={() => setCmdIdx(idx)}
-                    style={{
-                      display: 'flex', alignItems: 'baseline', gap: 12,
-                      width: '100%', textAlign: 'left', padding: '9px 14px',
-                      background: idx === cmdIdx ? 'rgba(212,168,67,0.08)' : 'none',
-                      border: 'none', borderBottom: '1px solid var(--ink-trace)', cursor: 'pointer',
-                      borderLeft: idx === cmdIdx ? '2px solid var(--gold-dim)' : '2px solid transparent',
-                    }}
-                  >
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--gold-dim)', flexShrink: 0, width: 52 }}>
-                      {c.cmd}
-                    </span>
-                    <span style={{ fontFamily: 'var(--font-serif)', fontSize: 11, color: 'var(--ink-dim)', letterSpacing: 1 }}>
-                      {c.desc}
-                    </span>
-                  </button>
-                ))}
-                <div style={{ padding: '4px 14px', fontFamily: 'var(--font-serif)', fontSize: 9,
-                  color: 'var(--ink-trace)', letterSpacing: 1,
-                }}>↑↓ 导航　Enter 选中　Esc 关闭</div>
-              </div>
-            )}
+          {/* ── 输入区（仅问道 tab + 今日）── */}
+          {activeTab === 'chat' && isToday && (
+            <div style={{ borderTop: '1px solid var(--ink-trace)', position: 'relative', flexShrink: 0 }}>
+              {cmdMenu && filteredCmds.length > 0 && (
+                <div style={{
+                  position: 'absolute', bottom: '100%', left: 0, right: 0,
+                  background: 'var(--deep)', border: '1px solid var(--ink-trace)', borderBottom: 'none',
+                  maxHeight: 260, overflowY: 'auto',
+                }}>
+                  {filteredCmds.map((c, idx) => (
+                    <button
+                      key={c.cmd}
+                      onMouseDown={e => { e.preventDefault(); selectCmd(c) }}
+                      onMouseEnter={() => setCmdIdx(idx)}
+                      style={{
+                        display: 'flex', alignItems: 'baseline', gap: 12,
+                        width: '100%', textAlign: 'left', padding: '9px 14px',
+                        background: idx === cmdIdx ? 'rgba(212,168,67,0.08)' : 'none',
+                        border: 'none', borderBottom: '1px solid var(--ink-trace)', cursor: 'pointer',
+                        borderLeft: idx === cmdIdx ? '2px solid var(--gold-dim)' : '2px solid transparent',
+                      }}
+                    >
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--gold-dim)', flexShrink: 0, width: 52 }}>
+                        {c.cmd}
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-serif)', fontSize: 11, color: 'var(--ink-dim)', letterSpacing: 1 }}>
+                        {c.desc}
+                      </span>
+                    </button>
+                  ))}
+                  <div style={{ padding: '4px 14px', fontFamily: 'var(--font-serif)', fontSize: 9,
+                    color: 'var(--ink-trace)', letterSpacing: 1,
+                  }}>↑↓ 导航　Enter 选中　Esc 关闭</div>
+                </div>
+              )}
 
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', padding: '10px 14px' }}>
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={handleInput}
-                onKeyDown={handleKeyDown}
-                placeholder={ctxLoading ? '页面读取中，请稍候…' : '问一问器灵，或输入 / 查看命令...'}
-                rows={1}
-                disabled={loading || ctxLoading}
-                style={{
-                  flex: 1, background: 'none', border: 'none', outline: 'none',
-                  resize: 'none', fontFamily: 'var(--font-serif)', fontSize: 13,
-                  color: 'var(--ink)', lineHeight: 1.7, overflow: 'hidden',
-                  opacity: loading || ctxLoading ? 0.5 : 1,
-                }}
-              />
-              <button onClick={() => send()} disabled={loading || ctxLoading || !input.trim()} style={{
-                background: 'none', border: 'none', cursor: loading || ctxLoading || !input.trim() ? 'default' : 'pointer',
-                color: loading || ctxLoading || !input.trim() ? 'var(--ink-trace)' : 'var(--gold)',
-                fontSize: 16, paddingBottom: 2, flexShrink: 0, transition: 'color 0.2s',
-              }}>→</button>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', padding: '10px 14px' }}>
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={handleInput}
+                  onKeyDown={handleKeyDown}
+                  placeholder={ctxLoading ? '页面读取中，请稍候…' : '问一问器灵，或输入 / 查看命令...'}
+                  rows={1}
+                  disabled={loading || ctxLoading}
+                  style={{
+                    flex: 1, background: 'none', border: 'none', outline: 'none',
+                    resize: 'none', fontFamily: 'var(--font-serif)', fontSize: 13,
+                    color: 'var(--ink)', lineHeight: 1.7, overflow: 'hidden',
+                    opacity: loading || ctxLoading ? 0.5 : 1,
+                  }}
+                />
+                <button onClick={() => send()} disabled={loading || ctxLoading || !input.trim()} style={{
+                  background: 'none', border: 'none', cursor: loading || ctxLoading || !input.trim() ? 'default' : 'pointer',
+                  color: loading || ctxLoading || !input.trim() ? 'var(--ink-trace)' : 'var(--gold)',
+                  fontSize: 16, paddingBottom: 2, flexShrink: 0, transition: 'color 0.2s',
+                }}>→</button>
+              </div>
             </div>
-          </div>}
+          )}
         </div>
       )}
 

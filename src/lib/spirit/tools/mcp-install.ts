@@ -164,7 +164,7 @@ ${configSnippet}
 \`\`\``,
     brief:   `已载入 ${result.toolCount ?? '?'} 个工具`,
   }
-}, { displayName: '安装 MCP 服务器' })
+}, { displayName: '安装 MCP 服务器', domain: 'meta' })
 
 // ── list_mcp_servers 工具 ─────────────────────────────────────────────────────
 
@@ -208,4 +208,4 @@ registerTool({
     content: `已载入 ${adapters.length} 个 MCP 服务器：\n${lines.join('\n')}${note}`,
     brief:   `共 ${adapters.length} 个服务器`,
   }
-}, { displayName: '查看 MCP 服务器' })
+}, { displayName: '查看 MCP 服务器', domain: 'meta' })

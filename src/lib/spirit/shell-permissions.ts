@@ -31,7 +31,7 @@ export function createWriteToken(toolName: string, summary: string): string {
   const token = randomUUID()
   pendingApprovals.set(token, {
     command:   summary,
-    workdir:   toolName,
+    workdir:   toolName,   // write 令牌复用 workdir 字段存 toolName，消费时校验
     level:     'write',
     expiresAt: Date.now() + TOKEN_TTL_MS,
   })
@@ -40,20 +40,6 @@ export function createWriteToken(toolName: string, summary: string): string {
     approvedTokens.delete(token)
   }, TOKEN_TTL_MS + 1000)
   return token
-}
-
-/**
- * 消费写操作令牌（重调时验证工具名匹配）。
- * 返回 true 表示可以执行，同时销毁令牌（一次性）。
- */
-export function consumeWriteToken(token: string, toolName: string): boolean {
-  const approval = approvedTokens.get(token)
-  if (!approval) return false
-  if (Date.now() > approval.expiresAt) { approvedTokens.delete(token); return false }
-  if (approval.level !== 'write') return false
-  if (approval.workdir !== toolName) return false   // 工具名不一致，拒绝
-  approvedTokens.delete(token)
-  return true
 }
 
 /** 生成一次性令牌并存入待批准队列 */
@@ -83,14 +69,27 @@ export function approveToken(token: string, decision: 'once' | 'session'): boole
 }
 
 /**
- * 工具侧：消费令牌并验证命令一致性。
- * 返回 true 表示可以执行，同时销毁令牌（一次性）。
+ * 工具侧：消费令牌并验证一致性（一次性销毁）。
+ * - shell 调用：传 { command } — 验证命令字符串匹配
+ * - write 调用：传 { toolName } — 验证工具名匹配（存在 workdir 字段中）
  */
-export function consumeToken(token: string, command: string): boolean {
+export function consumeToken(
+  token: string,
+  opts: { command: string; toolName?: never } | { toolName: string; command?: never },
+): boolean {
   const approval = approvedTokens.get(token)
   if (!approval) return false
   if (Date.now() > approval.expiresAt) { approvedTokens.delete(token); return false }
-  if (approval.command !== command) return false   // 命令不一致，拒绝
+
+  if (opts.toolName !== undefined) {
+    // write 令牌：校验 toolName（存在 workdir 字段中）
+    if (approval.level !== 'write') return false
+    if (approval.workdir !== opts.toolName) return false
+  } else {
+    // shell 令牌：校验命令字符串
+    if (approval.command !== opts.command) return false
+  }
+
   approvedTokens.delete(token)
   return true
 }

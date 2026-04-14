@@ -21,6 +21,8 @@
 │  │  /api/spirit/chat   /api/spirit/context          │    │
 │  │  /api/spirit/session  /api/spirit/mcp            │    │
 │  │  /api/spirit/approve  /api/spirit/sync           │    │
+│  │  /api/spirit/vows  /api/spirit/skills            │    │
+│  │  /api/spirit/preferences                         │    │
 │  │  /api/sync  /api/webhooks/{github,notion}        │    │
 │  └─────────────────────────────────────────────────┘    │
 │                                                          │
@@ -104,56 +106,92 @@ adapters/
 
 所有工具通过 `registerTool(definition, handler, opts)` 注册进全局 registry，LangGraph 层初始化时 wrap 成 `DynamicStructuredTool`。
 
-**执行工具**
+工具按**域（domain）**分组，每次请求根据消息关键词决定加载哪些域，避免将不相关工具堆入上下文。
+
+**域分配**
+
+| 域 | 加载时机 | 工具数 |
+|----|----------|--------|
+| `cultivation` | 默认 | 4 |
+| `memory` | 默认 | 5 |
+| `vow` | 默认 | 5 |
+| `knowledge` | 默认 | 6 |
+| `meta` | 默认 | 2 |
+| `web` | 消息含"搜索/查一下/最新"等关键词时 | 2 |
+| `library` | 消息含"藏经阁/文档/收藏"等关键词时 | 3 |
+| `system` | 消息含"命令/执行/文件/代码/shell"等关键词时 | 3 |
+
+**cultivation 域**
 
 | 工具名 | 文件 | 功能 |
 |--------|------|------|
-| `run_shell` | `shell.ts` | 执行 shell 命令，三级安全分类（safe/moderate/destructive） |
-| `list_files` | `files.ts` | 列出目录结构 |
-| `read_file` | `files.ts` | 读取文件内容 |
-
-**联网工具**
-
-| 工具名 | 文件 | 功能 |
-|--------|------|------|
-| `web_search` | `search.ts` | Tavily API 联网搜索 |
-| `fetch_url` | `search.ts` | 抓取任意 URL 纯文本 |
-
-**知识库工具**
-
-| 工具名 | 文件 | 功能 |
-|--------|------|------|
-| `search_library` | `library.ts` | 混合检索藏经阁 |
-| `list_library` | `library.ts` | 按分类列举藏经阁 |
-| `collect_document` | `library.ts` | 收藏文章（需权限确认） |
-| `search_blog_posts` | `codelife.ts` | 混合检索用户博客 |
-| `read_user_blogs` | `codelife.ts` | 读取博客元数据列表 |
 | `read_leetcode_records` | `codelife.ts` | 读取刷题记录 |
 | `read_cultivation_stats` | `codelife.ts` | 读取修为总览 |
+| `search_blog_posts` | `codelife.ts` | 混合检索用户博客 |
+| `search_conversations` | `codelife.ts` | 语义检索历史对话 |
 
-**记忆工具**
+**memory 域**
 
 | 工具名 | 文件 | 功能 |
 |--------|------|------|
 | `get_daily_logs` | `memory-read.ts` | 读取近 N 天 DailyLog |
 | `get_weekly_patterns` | `memory-read.ts` | 读取周规律 |
-| `get_skill_cards` | `memory-read.ts` | 读取技能卡 |
-| `search_conversations` | `memory-read.ts` | 语义检索历史对话 |
-| `search_skills` | `skills.ts` | 搜索技术洞察卡片 |
-| `write_note` | `memory-write.ts` | 写随手记 |
-| `update_persona_observation` | `memory-write.ts` | 更新人格观察 |
-| `save_skill_card` | `memory-write.ts` | 保存技术洞察卡片 |
+| `get_skill_cards` | `memory-read.ts` | 读取技能卡（原始格式） |
+| `update_persona_observation` | `memory-write.ts` | 更新人格观察（写） |
 
-**誓约工具**
+**vow 域**
 
 | 工具名 | 文件 | 功能 |
 |--------|------|------|
 | `list_vows` | `vow.ts` | 列举誓约 |
+| `vow_summary` | `vow.ts` | 查看誓约详细进度（含各子目标数据） |
 | `create_vow` | `vow.ts` | 创建誓约（需权限确认） |
 | `update_vow` | `vow.ts` | 修改誓约 |
 | `delete_vow` | `vow.ts` | 删除誓约（需权限确认） |
 
-新增工具：在 `spirit/tools/` 下新建文件，调用 `registerTool()`，在 `tools/index.ts` 中 import 触发注册。
+**knowledge 域**
+
+| 工具名 | 文件 | 功能 |
+|--------|------|------|
+| `write_note` | `memory-write.ts` | 写随手记 |
+| `save_skill_card` | `memory-write.ts` | 保存技术洞察卡片（写） |
+| `search_skills` | `skills.ts` | 全文检索技能卡 |
+| `list_skills` | `skills.ts` | 列出所有技能卡（支持标签过滤） |
+| `delete_skill` | `skills.ts` | 删除技能卡 |
+| `list_preferences` | `preferences.ts` | 列出用户偏好（按置信度排序） |
+| `save_preference` | `preferences.ts` | 保存/更新用户偏好 |
+
+**meta 域**
+
+| 工具名 | 文件 | 功能 |
+|--------|------|------|
+| `install_mcp` | `mcp-install.ts` | 动态安装 MCP 服务器（当前进程有效） |
+| `list_mcp_servers` | `mcp-install.ts` | 查看已载入 MCP 服务器及工具数 |
+
+**web 域（按需）**
+
+| 工具名 | 文件 | 功能 |
+|--------|------|------|
+| `web_search` | `search.ts` | Tavily API 联网搜索 |
+| `fetch_url` | `web.ts` | 抓取任意 URL 纯文本 |
+
+**library 域（按需）**
+
+| 工具名 | 文件 | 功能 |
+|--------|------|------|
+| `collect_document` | `library.ts` | 收藏文章到藏经阁（需权限确认） |
+| `search_library` | `library.ts` | 混合检索藏经阁 |
+| `list_library` | `library.ts` | 按分类列举藏经阁 |
+
+**system 域（按需）**
+
+| 工具名 | 文件 | 功能 |
+|--------|------|------|
+| `run_shell` | `shell.ts` | 执行 shell 命令，三级安全分类（safe/moderate/destructive） |
+| `list_files` | `files.ts` | 列出目录结构（支持 glob 过滤） |
+| `read_file` | `files.ts` | 读取文件内容（支持行号范围） |
+
+新增工具：在 `spirit/tools/` 下新建文件，调用 `registerTool(definition, handler, { domain: '...' })`，在 `tools/index.ts` 中 import 触发注册。
 
 #### 3.3 写操作权限门控
 
@@ -251,10 +289,25 @@ parallel（同时满足两条）：
 | `supervisor` | `nodes/supervisor.ts` | Sequential 调度，决策 `next` 字段 |
 | `executor` | `nodes/executor.ts` | Parallel 执行单元，由 `Send` API 并发触发 |
 | `synthesizer` | `nodes/synthesizer.ts` | 合并并行结果为统一回答 |
-| `qingxiao` | `agents.ts` | `createReactAgent`，全量工具，主控 |
+| `qingxiao` | `agents.ts` | `createReactAgent`，按请求域加载工具，主控 |
 | `search_agent` | `agents.ts` | `createReactAgent`，仅 web_search + fetch_url |
 | `code_agent` | `agents.ts` | `createReactAgent`，算法相关工具 |
-| `planner_agent` | `agents.ts` | `createReactAgent`，学习规划工具 |
+| `planner_agent` | `agents.ts` | `createReactAgent`，学习规划工具（list_preferences 等） |
+
+Agent ID / 展示名由 `langgraph/agent-config.ts` 的 `AGENT_DEFS` 数组集中定义，`AgentId` 类型、`AGENT_IDS` 元组、`AGENT_DISPLAY` 映射均从该数组派生，不在其他文件重复声明。
+
+##### 图编译与域注入
+
+每次 `/api/spirit/chat` 请求都会调用 `getQingxiaoDomains(userMessage)` 得到本轮域列表，并传入 `buildFullGraph(domains)` 重新编译整张图（非模块级缓存）。这样工具集精确匹配消息意图。仅 debug 用的 direct 模式图（`buildDirectGraph`）按 agentId 缓存。
+
+```typescript
+// tools.ts
+const QINGXIAO_DEFAULT_DOMAINS = ['cultivation', 'memory', 'vow', 'knowledge', 'meta']
+
+// 按消息关键词追加可选域
+function inferExtraDomains(msg: string): ToolDomain[]
+function getQingxiaoDomains(msg?: string): ToolDomain[]
+```
 
 ##### SSE 流（stream.ts）
 
@@ -321,9 +374,18 @@ GET /api/sync?source=blog（手动/cron/webhook）
   → revalidateTag('blog') → 下次访问重新拉 Notion
 ```
 
-#### 3.7 前端组件（SpiritWidget.tsx）
+#### 3.7 前端组件（SpiritWidget 及拆分模块）
 
-**消息结构**：
+原 `SpiritWidget.tsx` 单文件已拆分为以下模块：
+
+| 文件 | 职责 |
+|------|------|
+| `components/spirit/types.ts` | 共享类型：`ExecutionStep`、`PermissionRequest`、`Message`、`MCPInfo`、`SlashCommand`、`SLASH_COMMANDS` |
+| `components/spirit/MessageItem.tsx` | 单条消息渲染（memo 化，防止输入时重渲历史消息） |
+| `components/spirit/useSpiritChat.ts` | 聊天状态管理 Hook（SSE 消费、步骤追踪、权限确认逻辑） |
+| `components/spirit/SpiritWidget.tsx` | 顶层容器，布局 + 拖拽 + 斜杠命令 |
+
+**消息结构**（定义于 `components/spirit/types.ts`）：
 
 ```typescript
 interface Message {
@@ -378,6 +440,8 @@ permission_request SSE 事件
 | `/api/spirit/mcp` | GET | 返回已加载 MCP 服务器 + 全部工具（含内置） |
 | `/api/spirit/mcp` | POST | 动态装载 MCP 包（需 `allowDynamicInstall: true`） |
 | `/api/spirit/vows` | GET / POST / PATCH / DELETE | 誓约 CRUD |
+| `/api/spirit/skills` | GET / POST / PATCH / DELETE | 技能卡 CRUD |
+| `/api/spirit/preferences` | GET / POST / PATCH / DELETE | 用户偏好 CRUD |
 | `/api/spirit/sync` | POST | 触发数据同步 + 周期记忆生成 |
 | `/api/sync` | GET | 按需重置 ISR 缓存（`?source=blog\|github\|leetcode\|all`） |
 | `/api/webhooks/github` | POST | GitHub Push 事件 → 触发 commit 同步 |
@@ -433,7 +497,7 @@ import { registerTool } from '../registry'
 registerTool(
   { name: 'my_tool', description: '...', parameters: { ... } },
   async (args) => { return { content: '...', brief: '...' } },
-  { displayName: '我的工具' }  // 可选：requiresApproval, approvalSummary
+  { displayName: '我的工具', domain: 'knowledge' }  // 必须指定 domain
 )
 ```
 
@@ -457,10 +521,10 @@ registerTool(definition, handler, {
 
 ### 新增专项 Agent
 
-1. `tools.ts` 的 `TOOL_SETS` 中定义工具集
-2. `agents.ts` 中新建 `createXxxAgent()` 函数，加入 `getAgentById` 的 switch
-3. `graph.ts` 中加入节点和路由
-4. `AGENT_DISPLAY` 中注册展示名
+1. 在 `langgraph/agent-config.ts` 的 `AGENT_DEFS` 数组中新增一条（id + displayName）；`AgentId`、`AGENT_IDS`、`AGENT_DISPLAY` 自动派生
+2. `tools.ts` 中为新 Agent 指定可见工具（`agents` 过滤字段）
+3. `agents.ts` 中新建 `createXxxAgent()` 函数，加入 `getAgentById` 的 switch
+4. `graph.ts` 中加入节点和路由
 5. 更新 `nodes/planner.ts` 和 `nodes/supervisor.ts` 的 schema + 提示
 
 ---
@@ -478,9 +542,10 @@ registerTool(definition, handler, {
 
 - **博客字数缓存**：`content/blog_wc_cache.json` 按 pageId + lastEdited 缓存字数，首次后无需重复拉正文
 - **ISR**：GitHub / LeetCode 数据按配置的 `revalidate` 周期缓存
-- **图缓存**：`getCompiledGraph()` 模块级缓存，编译后的 StateGraph 在同进程内所有请求复用
+- **按请求编译图**：每次请求调用 `buildFullGraph(domains)` 重新编译，工具集与消息意图精确匹配；direct 模式图按 agentId 缓存（调试用）
 - **Agent 缓存**：`getAgentById()` 懒加载单例缓存，executor 并行时多个子任务可复用同一 Agent 实例
 - **快速分类器**：`classify.ts` 纯规则匹配，命中时跳过 Planner LLM 调用（节省 ~1 次 RTT）
+- **域过滤**：默认仅注入 22 个工具（cultivation/memory/vow/knowledge/meta），web/library/system 按需追加，减少上下文长度
 - **博客/藏经阁混合检索**：BM25 + embedding 预索引，搜索不阻塞在线 embed 计算
 - **React.memo**：`MessageItem` memo 化，防止输入时重渲染历史消息
 - **CSS 变量 + 直接 DOM 操作**：面板拖拽绕开 React 渲染循环，实现实时响应

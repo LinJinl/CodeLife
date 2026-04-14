@@ -8,7 +8,10 @@ import OpenAI from 'openai'
 import { registerTool } from '../registry'
 import config from '../../../../codelife.config'
 import { getLibEmbeddings, saveLibEmbeddings } from '../memory'
-import { hybridSearch, type HybridDoc } from '../hybrid-search'
+import { HybridSearchService, makeEmbedder } from '../hybrid-search-service'
+import type { HybridDoc } from '../hybrid-search'
+
+const libSearch = new HybridSearchService(getLibEmbeddings, saveLibEmbeddings)
 
 export interface LibraryEntry {
   id:       string
@@ -117,18 +120,10 @@ registerTool({
   }
 }, {
   displayName:      '收藏至藏经阁',
+  domain:           'library',
   requiresApproval: true,
   approvalSummary:  (args) => `收藏「${String(args.title ?? '').slice(0, 30)}」到藏经阁`,
 })
-
-function makeEmbedder() {
-  const { OpenAIEmbeddings } = require('@langchain/openai')
-  return new OpenAIEmbeddings({
-    apiKey:    config.spirit?.apiKey,
-    modelName: 'text-embedding-3-small',
-    ...(config.spirit?.baseURL ? { configuration: { baseURL: config.spirit.baseURL } } : {}),
-  })
-}
 
 registerTool({
   name:        'search_library',
@@ -153,19 +148,7 @@ registerTool({
     text: [e.title, e.summary, e.tags.join(' '), e.category].join(' '),
   }))
 
-  // 读 embedding 缓存
-  const cache    = getLibEmbeddings()
-  const cacheMap = new Map(cache.map(e => [e.id, e.vec]))
-
-  const results = await hybridSearch(docs, query as string, {
-    topK:         Math.min(Number(topK), 10),
-    embedder:     makeEmbedder(),
-    getCachedVec: id => cacheMap.get(id),
-    onNewVecs:    newVecs => {
-      for (const { id, vec } of newVecs) cacheMap.set(id, vec)
-      saveLibEmbeddings(Array.from(cacheMap.entries()).map(([id, vec]) => ({ id, vec })))
-    },
-  })
+  const results = await libSearch.search(docs, query as string, Math.min(Number(topK), 10))
 
   if (results.length === 0) return { content: '藏经阁中未找到相关文档。', brief: '无匹配结果' }
 
@@ -180,7 +163,7 @@ registerTool({
       ? `召回 ${matched.length} 篇：${topTitles}`
       : `藏经阁共 ${total} 篇，无匹配`,
   }
-}, { displayName: '检索藏经阁' })
+}, { displayName: '检索藏经阁', domain: 'library', agents: ['code_agent'] })
 
 registerTool({
   name:        'list_library',
@@ -201,4 +184,4 @@ registerTool({
     content: JSON.stringify(result),
     brief:   `共 ${all.length} 篇，返回 ${result.length} 篇`,
   }
-}, { displayName: '列出藏经阁' })
+}, { displayName: '列出藏经阁', domain: 'library', agents: ['code_agent'] })

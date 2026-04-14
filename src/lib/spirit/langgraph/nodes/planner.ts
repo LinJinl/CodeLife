@@ -7,6 +7,7 @@
 import { SystemMessage }    from '@langchain/core/messages'
 import { z }                from 'zod'
 import { buildPlannerModel } from '../agents'
+import { AGENT_IDS }         from '../agent-config'
 import type { GraphStateType, SubTask } from '../state'
 
 const PLANNER_SYSTEM_PROMPT = `你是任务规划器，负责分析用户请求，决定最优执行策略。
@@ -53,7 +54,7 @@ const plannerSchema = z.object({
   strategy: z.enum(['direct', 'sequential', 'parallel']),
   subtasks: z.array(z.object({
     id:          z.string(),
-    agentId:     z.enum(['search_agent', 'code_agent', 'planner_agent', 'qingxiao']),
+    agentId:     z.enum(AGENT_IDS),
     description: z.string(),
   })).optional(),
 })

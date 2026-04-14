@@ -13,7 +13,10 @@ import {
   getBlogPostsCache, type CachedBlogPost,
 } from '../memory'
 import { hybridSearch, type HybridDoc } from '../hybrid-search'
+import { HybridSearchService, makeEmbedder } from '../hybrid-search-service'
 import { summarizeChunksForQuery }      from '../summarize'
+
+const blogSearch = new HybridSearchService(getBlogEmbeddings, saveBlogEmbeddings)
 
 registerTool({
   name:        'read_user_blogs',
@@ -52,7 +55,7 @@ registerTool({
     content: JSON.stringify(result),
     brief:   `共 ${posts.length} 篇：${topTitles}`,
   }
-}, { displayName: '读取博客记录' })
+}, { displayName: '读取博客记录', domain: 'cultivation', agents: ['code_agent'] })
 
 registerTool({
   name:        'read_leetcode_records',
@@ -88,7 +91,7 @@ registerTool({
     content: JSON.stringify(result),
     brief:   `共 ${problems.length} 题，返回 ${result.length} 题`,
   }
-}, { displayName: '读取刷题记录' })
+}, { displayName: '读取刷题记录', domain: 'cultivation', agents: ['code_agent', 'planner_agent'] })
 
 registerTool({
   name:        'read_cultivation_stats',
@@ -108,7 +111,7 @@ registerTool({
     content: JSON.stringify({ realm, totalPoints: total, persona, activeVows: vows, recentDays: logs.length }),
     brief:   `${realm.name} ${realm.stage}，近30日 ${total} 修为`,
   }
-}, { displayName: '读取修为数据' })
+}, { displayName: '读取修为数据', domain: 'cultivation', agents: ['planner_agent'] })
 
 registerTool({
   name:        'search_blog_posts',
@@ -158,18 +161,7 @@ registerTool({
     text: `${p.title}\n${p.content || p.excerpt}`,
   }))
 
-  const cache    = getBlogEmbeddings()
-  const cacheMap = new Map(cache.map(e => [e.id, e.vec]))
-
-  const results = await hybridSearch(docs, query as string, {
-    topK:         Math.min(Number(topK), 10),
-    embedder:     makeEmbedder(),
-    getCachedVec: id => cacheMap.get(id),
-    onNewVecs:    newVecs => {
-      for (const { id, vec } of newVecs) cacheMap.set(id, vec)
-      saveBlogEmbeddings(Array.from(cacheMap.entries()).map(([id, vec]) => ({ id, vec })))
-    },
-  })
+  const results = await blogSearch.search(docs, query as string, Math.min(Number(topK), 10))
 
   if (results.length === 0) return { content: '没有找到相关博文', brief: '无结果' }
 
@@ -191,18 +183,7 @@ registerTool({
     content: JSON.stringify(matched),
     brief:   `找到 ${matched.length} 篇：${topTitles}`,
   }
-}, { displayName: '检索博客文章' })
-
-// ── embedding 构建辅助 ────────────────────────────────────────
-
-function makeEmbedder() {
-  const { OpenAIEmbeddings } = require('@langchain/openai')
-  return new OpenAIEmbeddings({
-    apiKey:    config.spirit?.apiKey,
-    modelName: 'text-embedding-3-small',
-    ...(config.spirit?.baseURL ? { configuration: { baseURL: config.spirit.baseURL } } : {}),
-  })
-}
+}, { displayName: '检索博客文章', domain: 'cultivation', agents: ['code_agent'] })
 
 // ── 对话检索（hybrid：BM25 + 向量 → RRF）────────────────────
 
@@ -294,4 +275,4 @@ registerTool({
     content: summary,
     brief:   `综合 ${chunks.length} 条历史消息（近 ${lookback} 天）`,
   }
-}, { displayName: '检索对话历史' })
+}, { displayName: '检索对话历史', domain: 'memory', agents: ['planner_agent'] })

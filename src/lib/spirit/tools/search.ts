@@ -69,4 +69,4 @@ registerTool({
     content,
     brief: `找到 ${results.length} 条：${topTitles}`,
   }
-}, { displayName: '联网搜索' })
+}, { displayName: '联网搜索', domain: 'web', agents: ['search_agent'] })

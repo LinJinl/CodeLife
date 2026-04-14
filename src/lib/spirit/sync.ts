@@ -9,8 +9,9 @@
 import {
   saveDailyLog, getRecentDailyLogs, getActiveVows, saveVows, getVows,
   saveWeeklyPattern, getWeeklyPatterns, getPersona, savePersona,
+  getCumulativePoints, calcVowStreak, getWeekStart,
 } from './memory'
-import type { DailyLog, DailyActivity, WeeklyPattern, PersonaProfile } from './memory'
+import type { DailyLog, DailyActivity, WeeklyPattern, PersonaProfile, VowSubGoal } from './memory'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 
 // 避免在 sync 里直接引入 data.ts（会带着 unstable_cache 的服务端约束）
@@ -106,6 +107,19 @@ export async function syncToday(): Promise<DailyLog> {
     }
   } catch { /* 数据源未配置时跳过 */ }
 
+  // ── GitHub ────────────────────────────────────────────────
+  try {
+    const { createGithubAdapter } = await import('../adapters/github')
+    const gh    = createGithubAdapter(config.github, config.cultivation)
+    const stats = await gh.getStats()
+    const todayContrib = stats.contributions.find((c: { date: string; count: number }) => c.date === date)
+    if (todayContrib && todayContrib.count > 0) {
+      const pts = todayContrib.count * (config.cultivation?.github?.commit ?? 15)
+      activities.push({ type: 'github', count: todayContrib.count, points: pts })
+      totalPoints += pts
+    }
+  } catch { /* 未配置时跳过 */ }
+
   const log: DailyLog = {
     date,
     activities,
@@ -126,28 +140,115 @@ function checkVowsForToday(log: DailyLog) {
   for (const vow of vows) {
     if (vow.status !== 'active') continue
     for (const goal of vow.subGoals) {
-      if (goal.completedDates.includes(log.date)) continue  // 已记录过今天
-      let met = false
-      switch (goal.metric) {
-        case 'blog_daily':
-          met = log.activities.some(a => a.type === 'blog' && a.count > 0); break
-        case 'leetcode_daily':
-          met = log.activities.some(a => a.type === 'leetcode' && a.count > 0); break
-        case 'github_daily':
-          met = log.activities.some(a => a.type === 'github' && a.count > 0); break
-        case 'any_daily':
-          met = log.activities.length > 0; break
-        default:
-          break  // manual — 不自动更新
-      }
-      if (met) {
-        goal.completedDates.push(log.date)
-        changed = true
-      }
+      changed = updateGoal(goal, log) || changed
     }
   }
 
   if (changed) saveVows(vows)
+}
+
+function getActivityCount(log: DailyLog, activityType?: VowSubGoal['activityType']): number {
+  if (!activityType || activityType === 'any') {
+    return log.activities.reduce((s, a) => s + a.count, 0)
+  }
+  return log.activities.find(a => a.type === activityType)?.count ?? 0
+}
+
+function updateGoal(goal: VowSubGoal, log: DailyLog): boolean {
+  let changed = false
+
+  switch (goal.metric) {
+    // ── daily 型 ────────────────────────────────────────────
+    case 'blog_daily': {
+      if (goal.completedDates.includes(log.date)) break
+      if (log.activities.some(a => a.type === 'blog' && a.count > 0)) {
+        goal.completedDates.push(log.date)
+        changed = true
+      }
+      break
+    }
+    case 'leetcode_daily': {
+      if (goal.completedDates.includes(log.date)) break
+      if (log.activities.some(a => a.type === 'leetcode' && a.count > 0)) {
+        goal.completedDates.push(log.date)
+        changed = true
+      }
+      break
+    }
+    case 'github_daily': {
+      if (goal.completedDates.includes(log.date)) break
+      if (log.activities.some(a => a.type === 'github' && a.count > 0)) {
+        goal.completedDates.push(log.date)
+        changed = true
+      }
+      break
+    }
+    case 'any_daily': {
+      if (goal.completedDates.includes(log.date)) break
+      if (log.activities.length > 0) {
+        goal.completedDates.push(log.date)
+        changed = true
+      }
+      break
+    }
+
+    // ── count_total：累计计数 ────────────────────────────────
+    case 'count_total': {
+      if (goal.lastCountedDate === log.date) break  // 防重复
+      const cnt = getActivityCount(log, goal.activityType)
+      if (cnt > 0) {
+        goal.currentCount    = (goal.currentCount ?? 0) + cnt
+        goal.lastCountedDate = log.date
+        if (goal.target && goal.currentCount >= goal.target) goal.done = true
+        changed = true
+      }
+      break
+    }
+
+    // ── count_weekly：每周计数 ───────────────────────────────
+    case 'count_weekly': {
+      if (goal.lastCountedDate === log.date) break
+      const cnt = getActivityCount(log, goal.activityType)
+      if (cnt > 0) {
+        const ws = getWeekStart(log.date)
+        goal.weeklyLog = goal.weeklyLog ?? {}
+        goal.weeklyLog[ws] = (goal.weeklyLog[ws] ?? 0) + cnt
+        goal.lastCountedDate = log.date
+        changed = true
+      }
+      break
+    }
+
+    // ── streak_N：连续天数 ────────────────────────────────────
+    case 'streak_N': {
+      if (goal.completedDates.includes(log.date)) break
+      const cnt = getActivityCount(log, goal.activityType)
+      if (cnt > 0) {
+        goal.completedDates.push(log.date)
+        if (goal.target && calcVowStreak(goal.completedDates) >= goal.target) {
+          goal.done = true
+        }
+        changed = true
+      }
+      break
+    }
+
+    // ── reach_points：修为阈值 ───────────────────────────────
+    case 'reach_points': {
+      if (goal.done) break
+      const total = getCumulativePoints()
+      if (goal.target && total >= goal.target) {
+        goal.done = true
+        changed   = true
+      }
+      break
+    }
+
+    default:
+      break  // manual — 不自动更新
+  }
+
+  return changed
 }
 
 // ── 周期记忆生成 ─────────────────────────────────────────────

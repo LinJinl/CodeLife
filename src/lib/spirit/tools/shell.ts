@@ -109,7 +109,7 @@ registerTool({
 
   // ── 令牌路径：AI 携带令牌，验证后执行 ────────────────────────
   if (token) {
-    const valid = consumeToken(token, cmd)
+    const valid = consumeToken(token, { command: cmd })
     if (!valid) {
       return {
         content: '令牌无效、已过期或命令与批准时不一致，请重新发起权限请求。',
@@ -134,7 +134,7 @@ registerTool({
     content: `PERMISSION_REQUIRED::${newToken}::${safety}::${cmd}::${wdir}`,
     brief:   '等待确认',
   }
-}, { displayName: '执行 Shell' })
+}, { displayName: '执行 Shell', domain: 'system' })
 
 // ── 实际执行（抽取为函数，令牌验证和直接执行共用） ──────────────
 

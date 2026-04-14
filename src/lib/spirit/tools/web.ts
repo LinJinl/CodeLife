@@ -66,4 +66,4 @@ registerTool({
     content: JSON.stringify({ title, text, url: target }),
     brief:   title ? `已抓取「${title}」` : `已抓取 ${target}`,
   }
-}, { displayName: '抓取页面内容' })
+}, { displayName: '抓取页面内容', domain: 'web', agents: ['search_agent'] })
