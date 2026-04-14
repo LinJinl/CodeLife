@@ -9,6 +9,41 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import type { ChatOpenAI }             from '@langchain/openai'
 import type { ConversationMessage, SessionSummary } from './memory'
 
+// ── 网络探测（超时后辅助诊断）────────────────────────────────
+
+async function probe(url: string, timeoutMs = 4000): Promise<'ok' | 'timeout' | 'error'> {
+  try {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), timeoutMs)
+    const res = await fetch(url, { method: 'HEAD', signal: ac.signal })
+    clearTimeout(timer)
+    return res.ok || res.status < 500 ? 'ok' : 'error'
+  } catch (e: unknown) {
+    if (e instanceof Error && e.name === 'AbortError') return 'timeout'
+    return 'error'
+  }
+}
+
+async function diagnoseNetwork(apiBaseUrl?: string): Promise<void> {
+  const internet = await probe('https://1.1.1.1')
+  const api      = apiBaseUrl ? await probe(apiBaseUrl) : null
+
+  const netLabel = internet === 'ok' ? '✓ 网络正常' : internet === 'timeout' ? '✗ 网络超时' : '✗ 网络不可达'
+  const apiLabel = api === null      ? '（未配置 baseURL）'
+                 : api === 'ok'      ? '✓ API 端点可达'
+                 : api === 'timeout' ? '✗ API 端点超时'
+                 :                    '✗ API 端点不可达'
+
+  console.warn(`[summarize] 网络诊断 → ${netLabel} | ${apiLabel}`)
+  if (internet !== 'ok') {
+    console.warn('[summarize] 建议：检查服务器/本机网络连接，或代理配置')
+  } else if (api && api !== 'ok') {
+    console.warn('[summarize] 建议：API 服务商当前不可用，可稍后重试或切换端点')
+  } else {
+    console.warn('[summarize] 建议：网络正常但请求超时，可能是模型响应慢或请求体过大')
+  }
+}
+
 // ── summarizeSession ──────────────────────────────────────────
 
 const SESSION_SYSTEM = `你是一个对话记录整理助手。
@@ -39,20 +74,27 @@ export async function summarizeSession(
   }).join('\n')
 
   try {
-    const resp = await model.invoke([
+    const invoke = model.invoke([
       new SystemMessage(SESSION_SYSTEM),
       new HumanMessage(`日期：${date}\n\n${transcript}`),
     ])
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('summarize timeout')), 20_000)
+    )
+    const resp = await Promise.race([invoke, timeout])
 
     const summary = (typeof resp.content === 'string' ? resp.content : String(resp.content)).trim()
-
-    // 简单提取 topics：取摘要中的技术词汇或名词作标签（基于首次出现的方括号关键词或自动猜测）
-    const topics = extractTopics(summary, filtered)
+    const topics  = extractTopics(summary, filtered)
 
     return { date, summary, topics, generatedAt: new Date().toISOString() }
   } catch (err) {
     console.warn('[summarize] summarizeSession failed:', err)
-    // 降级：截取第一条用户消息前 60 字作摘要
+    if (err instanceof Error && err.message === 'summarize timeout') {
+      // 异步诊断，不阻塞降级返回
+      const baseURL = (model as unknown as { clientOptions?: { baseURL?: string } })
+        .clientOptions?.baseURL
+      diagnoseNetwork(baseURL).catch(() => {})
+    }
     const fallback = filtered.find(m => m.role === 'user')?.content.slice(0, 60) ?? '对话记录'
     return { date, summary: fallback + '…', topics: [], generatedAt: new Date().toISOString() }
   }
@@ -82,14 +124,22 @@ export async function summarizeChunksForQuery(
   }).join('\n\n---\n\n')
 
   try {
-    const resp = await model.invoke([
+    const invoke = model.invoke([
       new SystemMessage(CHUNKS_SYSTEM),
       new HumanMessage(`问题：「${query}」\n\n历史片段（共 ${chunks.length} 条）：\n\n${text}`),
     ])
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('summarize timeout')), 20_000)
+    )
+    const resp = await Promise.race([invoke, timeout])
     return (typeof resp.content === 'string' ? resp.content : String(resp.content)).trim()
   } catch (err) {
     console.warn('[summarize] summarizeChunksForQuery failed:', err)
-    // 降级：返回最相关的一条原文
+    if (err instanceof Error && err.message === 'summarize timeout') {
+      const baseURL = (model as unknown as { clientOptions?: { baseURL?: string } })
+        .clientOptions?.baseURL
+      diagnoseNetwork(baseURL).catch(() => {})
+    }
     const top = chunks[0]
     const role = top.role === 'user' ? '修士' : '器灵'
     return `[${top.date}] ${role}：${top.content}`

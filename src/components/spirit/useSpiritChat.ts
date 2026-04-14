@@ -26,9 +26,12 @@ export function useSpiritChat(open: boolean) {
   const [installPkg, setInstallPkg] = useState('')
   const [installing, setInstalling] = useState(false)
 
-  const bottomRef   = useRef<HTMLDivElement>(null)
-  const inputRef    = useRef<HTMLTextAreaElement>(null)
-  const pendingCards = useRef<LibraryCard[]>([])
+  const bottomRef        = useRef<HTMLDivElement>(null)
+  const inputRef         = useRef<HTMLTextAreaElement>(null)
+  const scrollRef        = useRef<HTMLDivElement>(null)   // 滚动容器，由使用方绑定
+  const pendingCards     = useRef<LibraryCard[]>([])
+  const userScrolledUp   = useRef(false)                  // 用户是否手动向上翻
+  const messagesRef      = useRef<Message[]>([])          // 始终持有最新 messages，供旧闭包读取
 
   // 加载今日会话
   useEffect(() => {
@@ -39,11 +42,22 @@ export function useSpiritChat(open: boolean) {
       .catch(() => {})
   }, [open])
 
-  // 流式输出时用 instant，避免 smooth scroll 被反复中断造成抖动
-  // 流式结束后 loading 变 false，再 smooth 滚到底
+  // 保持 messagesRef 与 messages state 同步
+  useEffect(() => { messagesRef.current = messages }, [messages])
+
+  // sticky scroll：只有用户没有向上翻时才跟随底部
   useEffect(() => {
+    if (userScrolledUp.current) return
     bottomRef.current?.scrollIntoView({ behavior: loading ? 'instant' : 'smooth' })
   }, [messages, phase, loading])
+
+  // 滚动容器的 onScroll 处理：检测用户是否翻上去了
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    userScrolledUp.current = distFromBottom > 80
+  }, [])
 
   const saveSession = useCallback((msgs: Message[]) => {
     if (!msgs.length) return
@@ -203,13 +217,14 @@ export function useSpiritChat(open: boolean) {
       : undefined
 
     const userMsg: Message = { role: 'user', content: raw, timestamp: new Date().toISOString(), ctxLabels }
-    const history = [...messages, userMsg]
+    const history = [...messagesRef.current, userMsg]
     setMessages([...history, { role: 'assistant', content: '', timestamp: new Date().toISOString() }])
     setInput('')
     setCmdMenu(false)
     setContexts([])
     setLoading(true)
     setPhase('thinking')
+    userScrolledUp.current = false   // 发消息时解锁自动滚动
     pendingCards.current = []
 
     let stepSeq          = 0
@@ -454,6 +469,6 @@ export function useSpiritChat(open: boolean) {
     mcpData, toolList, installPkg, setInstallPkg, installing,
     send, handlePermission, handleInput, handleKeyDown, selectCmd,
     doInstall, loadTools,
-    bottomRef, inputRef, pendingCards,
+    bottomRef, inputRef, scrollRef, handleScroll, pendingCards,
   }
 }

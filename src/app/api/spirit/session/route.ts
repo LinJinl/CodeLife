@@ -4,7 +4,7 @@
  */
 
 import { NextRequest }                                      from 'next/server'
-import { getConversation, saveConversation, saveSessionSummary } from '@/lib/spirit/memory'
+import { getConversation, saveConversation, saveSessionSummary, getAllConversationDates } from '@/lib/spirit/memory'
 import { summarizeSession }                                 from '@/lib/spirit/summarize'
 import config                                               from '../../../../../codelife.config'
 
@@ -15,17 +15,9 @@ function todayStr() {
 }
 
 export async function GET(req: NextRequest) {
-  // ?list=true → 返回最近 60 天内有对话记录的日期列表（倒序）
+  // ?list=true → 返回所有有对话记录的日期（倒序，扫目录全量，无时间窗口限制）
   if (req.nextUrl.searchParams.get('list') === 'true') {
-    const dates: string[] = []
-    for (let i = 0; i < 60; i++) {
-      const d = new Date()
-      d.setDate(d.getDate() - i)
-      const date = d.toISOString().slice(0, 10)
-      const conv = getConversation(date)
-      if (conv.messages.length > 0) dates.push(date)
-    }
-    return Response.json(dates)
+    return Response.json(getAllConversationDates())
   }
 
   const date = req.nextUrl.searchParams.get('date') ?? todayStr()

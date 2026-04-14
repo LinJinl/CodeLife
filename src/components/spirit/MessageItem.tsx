@@ -5,6 +5,31 @@ import ReactMarkdown from 'react-markdown'
 import type { LibraryCard, SkillCardData } from '@/lib/spirit/protocol'
 import type { Message } from './types'
 
+// ── 流式 Markdown 渲染 ────────────────────────────────────────
+// 在段落边界（\n\n）处切割：
+//   complete → ReactMarkdown（只在段落完成时 diff，不逐字重渲染）
+//   tail     → 纯文本 span（逐字更新但无 markdown 解析开销）
+// 代码块内（开口 ``` 数量为奇数）不切割，避免半截语法乱渲染。
+function StreamingMarkdown({ content }: { content: string }) {
+  // 统计行首 ``` 数量，判断是否在代码块内
+  const inCodeFence = ((content.match(/^```/gm) ?? []).length % 2) === 1
+
+  const splitIdx = inCodeFence ? -1 : content.lastIndexOf('\n\n')
+
+  const complete = splitIdx === -1 ? '' : content.slice(0, splitIdx + 2)
+  const tail     = splitIdx === -1 ? content : content.slice(splitIdx + 2)
+
+  if (!complete) {
+    return <span style={{ whiteSpace: 'pre-wrap' }}>{content}</span>
+  }
+  return (
+    <>
+      <ReactMarkdown>{complete}</ReactMarkdown>
+      {tail && <span style={{ whiteSpace: 'pre-wrap' }}>{tail}</span>}
+    </>
+  )
+}
+
 // ── 藏经阁结果卡片 ─────────────────────────────────────────────
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -426,7 +451,7 @@ export const MessageItem = memo(function MessageItem({
         <div className="spirit-md">
           {msg.content
             ? (streaming
-                ? <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
+                ? <StreamingMarkdown content={msg.content} />
                 : <ReactMarkdown>{msg.content}</ReactMarkdown>)
             : (!streaming ? <span style={{ color: 'var(--ink-trace)' }}>…</span> : null)
           }

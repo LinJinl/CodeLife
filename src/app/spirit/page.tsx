@@ -227,7 +227,7 @@ export default function SpiritPage() {
         }} />
 
         {/* 消息流 */}
-        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, position: 'relative' }}>
+        <div ref={chat.scrollRef} onScroll={chat.handleScroll} style={{ flex: 1, overflowY: 'auto', minHeight: 0, position: 'relative' }}>
           {isToday ? (
             <>
               {chat.messages.length === 0 && !chat.loading && <TodayEmpty />}

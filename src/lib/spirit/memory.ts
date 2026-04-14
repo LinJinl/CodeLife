@@ -289,7 +289,28 @@ export function getConversation(date: string): Conversation {
 
 export function saveConversation(conv: Conversation) {
   ensureDir(conversationsDir)
-  writeJSON(path.join(conversationsDir, `${conv.date}.json`), conv)
+  const file    = path.join(conversationsDir, `${conv.date}.json`)
+  const existing = readJSON<Conversation>(file, { date: conv.date, messages: [] })
+  // 拒绝缩水写入：新数据条数少于已有数据时不覆盖，防止 bug 导致历史丢失
+  if (conv.messages.length < existing.messages.length) {
+    console.warn(`[memory] saveConversation blocked: new(${conv.messages.length}) < existing(${existing.messages.length}), skipping`)
+    return
+  }
+  writeJSON(file, conv)
+}
+
+/** 返回所有有对话记录的日期（倒序），直接扫目录，不受时间窗口限制 */
+export function getAllConversationDates(): string[] {
+  ensureDir(conversationsDir)
+  return fs.readdirSync(conversationsDir)
+    .filter(f => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
+    .map(f => f.replace('.json', ''))
+    .filter(date => {
+      const conv = readJSON<Conversation>(path.join(conversationsDir, `${date}.json`), { date, messages: [] })
+      return conv.messages.length > 0
+    })
+    .sort()
+    .reverse()
 }
 
 export function getRecentConversations(days: number): Conversation[] {

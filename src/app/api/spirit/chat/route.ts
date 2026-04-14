@@ -80,6 +80,16 @@ export async function POST(req: NextRequest) {
   const lastUserText = (typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '')
   const msgPreview   = lastUserText.slice(0, 80)
 
+  // 短续接消息（如"已确认，请继续执行"）域推断时补充近期用户消息上下文，
+  // 避免权限确认后域丢失导致工具不可用
+  const inferText = lastUserText.length < 25
+    ? langchainMessages
+        .filter(m => m._getType() === 'human')
+        .slice(-4)
+        .map(m => (typeof m.content === 'string' ? m.content : ''))
+        .join(' ')
+    : lastUserText
+
   // 同步今日日志 + AI 域分类 并行跑，不互相阻塞
   const needSync  = !getDailyLog(today)
   const model     = buildChatModel(spirit.model)
@@ -97,7 +107,7 @@ export async function POST(req: NextRequest) {
 
         const [, extraDomains] = await Promise.all([
           needSync ? syncToday().catch(() => {}) : Promise.resolve(),
-          useAIDomains ? inferDomainsWithAI(lastUserText, model) : Promise.resolve([]),
+          useAIDomains ? inferDomainsWithAI(inferText, model) : Promise.resolve([]),
         ])
 
         push(encodeEvent({ type: 'tool_done', name: '__init__' }))

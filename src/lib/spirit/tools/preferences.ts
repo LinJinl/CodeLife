@@ -53,15 +53,20 @@ registerTool(
 registerTool(
   {
     name:        'save_preference',
-    description: '记录或更新一条用户偏好观察。当你在对话中发现用户明显的习惯倾向时使用。' +
-                 '已有相同 key 的条目会被更新，否则新建。',
+    description: '记录或更新一条用户偏好。' +
+                 '【更新已有偏好时】必须先调用 list_preferences 拿到目标条目的 id，再把 id 传入本工具——' +
+                 '这样才能精确覆盖而不是新建。id 匹配优先于 key 匹配；都不匹配才新建。',
     parameters: {
       type:       'object',
       required:   ['key', 'category', 'description', 'confidence'],
       properties: {
+        id: {
+          type:        'string',
+          description: '已有偏好的 id（如 pref_20260414_001）。更新时传入，新建时不填。',
+        },
         key: {
           type:        'string',
-          description: 'snake_case 标识，如 "prefers_code_first"',
+          description: 'snake_case 标识，如 "prefers_code_first"。更新时与原条目保持一致。',
         },
         category: {
           type:        'string',
@@ -70,11 +75,11 @@ registerTool(
         },
         description: {
           type:        'string',
-          description: '具体可验证的习惯描述，如"更倾向先看代码再看文档"（不要写"喜欢代码"这种模糊描述）',
+          description: '具体可验证的习惯描述，如"更倾向先看代码再看文档"',
         },
         confidence: {
           type:        'number',
-          description: '置信度 0-1。首次观察到建议 0.4~0.55；反复确认到 0.7+；极其强烈且多次验证才 0.85+',
+          description: '置信度 0-1。首次观察 0.4~0.55；反复确认 0.7+；极强烈且多次验证才 0.85+',
         },
         counter_evidence: {
           type:        'string',
@@ -88,7 +93,9 @@ registerTool(
     const today = new Date().toISOString().slice(0, 10)
     const now   = new Date().toISOString()
 
-    const existingIdx = prefs.findIndex(p => p.key === args.key)
+    // id 匹配优先，其次 key 匹配
+    let existingIdx = args.id ? prefs.findIndex(p => p.id === (args.id as string)) : -1
+    if (existingIdx === -1) existingIdx = prefs.findIndex(p => p.key === args.key)
     if (existingIdx >= 0) {
       const ex = prefs[existingIdx]
       ex.description     = args.description as string

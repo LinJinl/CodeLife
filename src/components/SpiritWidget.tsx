@@ -161,7 +161,7 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
     mcpData, installPkg, setInstallPkg, installing,
     send, handlePermission, handleInput, handleKeyDown, selectCmd,
     doInstall, loadTools,
-    bottomRef, inputRef,
+    bottomRef, inputRef, scrollRef, handleScroll,
   } = chat
 
   // ── 技能卡 ───────────────────────────────────────────────────
@@ -1449,7 +1449,7 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
 
           {/* ── 消息区（仅问道 tab）── */}
           {activeTab === 'chat' && (
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px' }}>
+            <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px' }}>
               <ChatMessageList
                 messages={displayMessages}
                 isToday={isToday}
