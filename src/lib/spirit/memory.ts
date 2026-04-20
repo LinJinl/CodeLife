@@ -5,6 +5,7 @@
 
 import fs   from 'fs'
 import path from 'path'
+import { addDays, dateInTZ, recentDates, weekStart } from './time'
 
 // ── 类型定义 ──────────────────────────────────────────────────
 
@@ -136,7 +137,9 @@ function readJSON<T>(file: string, fallback: T): T {
 
 function writeJSON(file: string, data: unknown) {
   ensureDir(path.dirname(file))
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8')
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
+  fs.renameSync(tmp, file)
 }
 
 // ── DailyLog ──────────────────────────────────────────────────
@@ -155,10 +158,7 @@ export function saveDailyLog(log: DailyLog) {
 export function getRecentDailyLogs(days: number): DailyLog[] {
   ensureDir(logsDir)
   const logs: DailyLog[] = []
-  for (let i = 0; i < days; i++) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    const date = d.toISOString().slice(0, 10)
+  for (const date of recentDates(days)) {
     const log  = getDailyLog(date)
     if (log) logs.push(log)
   }
@@ -220,6 +220,13 @@ export function getVows(): Vow[] {
 }
 
 export function saveVows(vows: Vow[]) {
+  const existing = getVows()
+  const merged = new Map(existing.map(v => [v.id, v]))
+  for (const vow of vows) merged.set(vow.id, vow)
+  writeJSON(vowsFile, Array.from(merged.values()))
+}
+
+export function replaceVows(vows: Vow[]) {
   writeJSON(vowsFile, vows)
 }
 
@@ -231,17 +238,7 @@ export function getActiveVows(): Vow[] {
 
 /** 返回本周一（UTC+8 日历日期）的 YYYY-MM-DD */
 export function getWeekStart(dateStr?: string): string {
-  // 转为 Asia/Shanghai 的字符串，再 parse 成本地日期对象用于日历计算
-  const ref     = dateStr ? new Date(dateStr + 'T00:00:00+08:00') : new Date()
-  const utc8str = ref.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })
-  const d       = new Date(utc8str)
-  const day     = d.getDay() || 7  // 1=Mon … 7=Sun
-  d.setDate(d.getDate() - day + 1)
-  // 用本地字段拼接，避免 toISOString() 偏移回 UTC 导致日期错位
-  const y  = d.getFullYear()
-  const m  = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${dd}`
+  return weekStart(dateStr)
 }
 
 /** 近 90 天总修为（reach_points 用） */
@@ -256,14 +253,14 @@ export function getCumulativePoints(): number {
 export function calcVowStreak(dates: string[]): number {
   if (dates.length === 0) return 0
   const set = new Set(dates)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = dateInTZ()
   // 从今天或最近一天往前数
   const start = set.has(today) ? today : [...dates].sort().pop()!
   let streak = 0
-  const d = new Date(start + 'T00:00:00Z')
-  while (set.has(d.toISOString().slice(0, 10))) {
+  let cursor = start
+  while (set.has(cursor)) {
     streak++
-    d.setUTCDate(d.getUTCDate() - 1)
+    cursor = addDays(cursor, -1)
   }
   return streak
 }
@@ -291,12 +288,14 @@ export function saveConversation(conv: Conversation) {
   ensureDir(conversationsDir)
   const file    = path.join(conversationsDir, `${conv.date}.json`)
   const existing = readJSON<Conversation>(file, { date: conv.date, messages: [] })
-  // 拒绝缩水写入：新数据条数少于已有数据时不覆盖，防止 bug 导致历史丢失
-  if (conv.messages.length < existing.messages.length) {
-    console.warn(`[memory] saveConversation blocked: new(${conv.messages.length}) < existing(${existing.messages.length}), skipping`)
-    return
-  }
-  writeJSON(file, conv)
+  const seen = new Set<string>()
+  const merged = [...existing.messages, ...conv.messages].filter(m => {
+    const key = `${m.timestamp}|${m.role}|${m.content}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
+  writeJSON(file, { date: conv.date, messages: merged })
 }
 
 /** 返回所有有对话记录的日期（倒序），直接扫目录，不受时间窗口限制 */
@@ -316,10 +315,7 @@ export function getAllConversationDates(): string[] {
 export function getRecentConversations(days: number): Conversation[] {
   ensureDir(conversationsDir)
   const result: Conversation[] = []
-  for (let i = 0; i < days; i++) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    const date = d.toISOString().slice(0, 10)
+  for (const date of recentDates(days)) {
     const conv = getConversation(date)
     if (conv.messages.length > 0) result.push(conv)
   }
@@ -329,6 +325,7 @@ export function getRecentConversations(days: number): Conversation[] {
 // ── Conversation Embedding Cache ──────────────────────────────
 
 export interface ConvEmbeddingEntry {
+  id?:       string
   date:      string
   msgIndex:  number
   role:      'user' | 'assistant'
@@ -428,6 +425,8 @@ export interface SkillCard {
   useCount:    number
   userNotes?:  string    // 用户的想法、修正或补充，纳入下次提炼上下文
   editedAt?:   string    // 最后一次人工编辑时间
+  lastUsed?:   string
+  supersededBy?: string
 }
 
 const skillsDir        = path.join(BASE, 'skills')
@@ -439,6 +438,14 @@ export function getSkills(): SkillCard[] {
 }
 
 export function saveSkills(cards: SkillCard[]) {
+  ensureDir(skillsDir)
+  const existing = getSkills()
+  const merged = new Map(existing.map(c => [c.id, c]))
+  for (const card of cards) merged.set(card.id, card)
+  writeJSON(skillsIndexFile, Array.from(merged.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt)))
+}
+
+export function replaceSkills(cards: SkillCard[]) {
   ensureDir(skillsDir)
   writeJSON(skillsIndexFile, cards)
 }
@@ -465,6 +472,7 @@ export function saveSkillEmbeddings(entries: SkillEmbeddingEntry[]) {
  * 而非追加。置信度随观测次数持续收敛。
  */
 export type PreferenceCategory = 'learning' | 'technical' | 'communication' | 'work'
+export type PreferenceVolatility = 'stable' | 'moderate' | 'volatile'
 
 export interface Preference {
   id:               string                // pref_YYYYMMDD_NNN
@@ -474,6 +482,9 @@ export interface Preference {
   confidence:       number               // 0-1，随观测增加
   evidence:         string[]             // 观测到的日期列表
   counterEvidence?: string               // 反例描述（置信度低时）
+  volatility?:      PreferenceVolatility
+  source?:          'explicit' | 'observed' | 'manual' | 'extractor'
+  confirmed?:       boolean
   lastSeen:         string               // YYYY-MM-DD，最近一次被观测到
   updatedAt:        string               // ISO，最后一次更新时间
 }
@@ -485,6 +496,17 @@ export function getPreferences(): Preference[] {
 }
 
 export function savePreferences(prefs: Preference[]) {
+  const existing = getPreferences()
+  const merged = new Map(existing.map(p => [p.id, p]))
+  for (const pref of prefs) {
+    const byKey = Array.from(merged.values()).find(p => p.key === pref.key)
+    if (byKey && byKey.id !== pref.id) merged.delete(byKey.id)
+    merged.set(pref.id, pref)
+  }
+  writeJSON(preferencesFile, Array.from(merged.values()))
+}
+
+export function replacePreferences(prefs: Preference[]) {
   writeJSON(preferencesFile, prefs)
 }
 
@@ -514,10 +536,7 @@ export function saveSessionSummary(s: SessionSummary) {
 export function getRecentSummaries(days: number): SessionSummary[] {
   ensureDir(summariesDir)
   const result: SessionSummary[] = []
-  for (let i = 0; i < days; i++) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    const date = d.toISOString().slice(0, 10)
+  for (const date of recentDates(days)) {
     const s    = getSessionSummary(date)
     if (s) result.push(s)
   }

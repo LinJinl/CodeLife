@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse }    from 'next/server'
-import { getSkills, saveSkills }         from '@/lib/spirit/memory'
+import { getSkills, replaceSkills } from '@/lib/spirit/memory'
 import { shouldExtractSkills }           from '@/lib/spirit/skill-extractor'
 import config                            from '../../../../../codelife.config'
 
@@ -65,7 +65,7 @@ export async function PATCH(req: NextRequest) {
     ...(body.userNotes !== undefined && { userNotes: body.userNotes }),
     editedAt: new Date().toISOString(),
   }
-  saveSkills(cards)
+  replaceSkills(cards)
   return NextResponse.json({ ok: true, card: cards[idx] })
 }
 
@@ -76,6 +76,6 @@ export async function DELETE(req: NextRequest) {
   if (idx < 0) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
   const [removed] = cards.splice(idx, 1)
-  saveSkills(cards)
+  replaceSkills(cards)
   return NextResponse.json({ ok: true, title: removed.title })
 }

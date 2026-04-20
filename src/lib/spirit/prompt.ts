@@ -15,22 +15,16 @@ import {
   getPreferences,
   calcVowStreak, getCumulativePoints, getWeekStart,
 } from './memory'
+import { currentDatetimeLabel, dateInTZ } from './time'
 import config from '../../../codelife.config'
 
 function currentDatetime(): string {
-  const now = new Date()
-  const opts: Intl.DateTimeFormatOptions = {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', weekday: 'short',
-    hour12: false,
-  }
-  return new Intl.DateTimeFormat('zh-CN', opts).format(now)
+  return currentDatetimeLabel()
 }
 
 /** Tier 1：今日修炼摘要（单行，不加载历史） */
 function formatTodayCompact(): string {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = dateInTZ()
   const log   = getDailyLog(today)
   if (!log || log.activities.length === 0) return '今日暂无记录'
   const parts = log.activities.map(a => {
@@ -44,8 +38,11 @@ function formatTodayCompact(): string {
 function formatVowsCompact(): string {
   const vows = getActiveVows()
   if (vows.length === 0) return '无'
-  const today = new Date().toISOString().slice(0, 10)
-  return vows.map(v => {
+  const today = dateInTZ()
+  return vows
+    .sort((a, b) => a.deadline.localeCompare(b.deadline))
+    .slice(0, 5)
+    .map(v => {
     const progress = v.subGoals.map(g => {
       if (['blog_daily', 'leetcode_daily', 'github_daily', 'any_daily'].includes(g.metric)) {
         const streak  = calcVowStreak(g.completedDates)
@@ -67,7 +64,7 @@ function formatVowsCompact(): string {
 
 /** Tier 1：近 5 天对话摘要（每条 ≤80 chars，替代原文注入） */
 function formatCompactSummaries(): string {
-  const today     = new Date().toISOString().slice(0, 10)
+  const today     = dateInTZ()
   const summaries = getRecentSummaries(6).filter(s => s.date !== today)
   if (summaries.length === 0) return ''
   return summaries.slice(0, 5).map(s => `[${s.date}] ${s.summary}`).join('\n')
@@ -77,13 +74,20 @@ function formatCompactSummaries(): string {
 function formatPreferencesCompact(): string {
   const prefs = getPreferences()
     .filter(p => p.confidence >= 0.35)
+    .filter(p => p.volatility !== 'volatile')
     .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 8)
-  if (prefs.length === 0) return ''
+  const perCategory = new Map<string, number>()
+  const selected = prefs.filter(p => {
+    const count = perCategory.get(p.category) ?? 0
+    if (count >= 3) return false
+    perCategory.set(p.category, count + 1)
+    return true
+  }).slice(0, 8)
+  if (selected.length === 0) return ''
   const CATEGORY_LABEL: Record<string, string> = {
     learning: '学习', technical: '技术', communication: '沟通', work: '节律',
   }
-  return prefs.map(p => {
+  return selected.map(p => {
     const indicator = p.confidence >= 0.75 ? '↑' : '~'
     const cat       = CATEGORY_LABEL[p.category] ?? p.category
     return `${indicator}[${cat}] ${p.description}`
@@ -165,13 +169,13 @@ ${summaryBlock}
 【工具一览（按域分组）】
 默认域（每次请求均可用）：
 - cultivation  →  read_leetcode_records / read_cultivation_stats / search_blog_posts / search_conversations
-- memory       →  get_daily_logs / get_weekly_patterns / get_skill_cards / update_persona_observation
+- memory       →  get_daily_logs / get_weekly_patterns / get_skill_cards / search_notes / update_persona_observation
 - vow          →  list_vows / vow_summary / create_vow / update_vow / delete_vow
 - knowledge    →  write_note / save_skill_card / search_skills / list_skills / delete_skill / list_preferences / save_preference
 - meta         →  install_mcp / list_mcp_servers
 
 按需域（消息含相关关键词时才追加）：
-- web          →  web_search / fetch_url          （触发词：搜索/搜集/查一下/找资料/最新/网上/官网/文档链接/了解一下）
+- web          →  research_web / web_search / fetch_url          （触发词：搜索/搜集/查一下/找资料/最新/网上/官网/文档链接/了解一下）
 - library      →  collect_document / search_library / list_library  （触发词：藏经阁/文档/收藏/整理资料）
 - system       →  run_shell / list_files / read_file  （触发词：命令/执行/文件/代码/shell/项目/目录）
 
@@ -179,11 +183,12 @@ ${summaryBlock}
 - 历史日志：get_daily_logs（近 N 天详细修炼数据）
 - 周规律：get_weekly_patterns（AI 生成的叙事 + 隐患标记）
 - 技能卡：list_skills（从历史对话提炼的技术洞察，支持标签过滤）或 search_skills（关键词搜索）
+- 随手记：search_notes（检索 write_note 写入的笔记）
 - 偏好画像：list_preferences（用户已知习惯，置信度已排序）
 - 对话搜索：search_conversations（语义检索历史对话）
 
 【记忆写入】
-- 发现值得保留的洞察 → write_note（随手记）或 save_skill_card（技术洞察）
+- 发现值得保留的洞察 → write_note（随手记）或 save_skill_card（技术洞察；工具会自动合并相似卡）
 - 用户明确表达偏好（如"回答精简点""不要分段""记住我喜欢 X"）→ 立即调用 save_preference，置信度 0.8（用户明确授权，无需等对话结束）；**仅针对本轮最新用户消息**，历史对话中已处理过的偏好不重复保存
 - 在对话中观察到用户明显习惯 → save_preference（置信度从 0.4 起，反复验证再提高）
 - 发现修士反复出现的行为模式 → update_persona_observation
@@ -196,8 +201,11 @@ ${summaryBlock}
 
 【对话原则】
 - 被问到"近况"时，先调 get_daily_logs(7) 拿数据，再给判断
+- 被问到"之前记了什么/笔记"时，先调 search_notes，不要凭印象回答
 - 创建誓约前，先调用 list_vows 检查是否有语义重叠的已有誓约；可用 metric：blog_daily / leetcode_daily / github_daily / any_daily（每日检测）/ count_total / count_weekly / streak_N / reach_points / manual；count_*/streak_N 需传 target 和 activityType，reach_points 需传 target
 - 搜索知识/文档时，同一轮内同时发起 search_blog_posts 和 search_library（parallel）；search_library 结果已含总数，不要再调 list_library
+- 联网搜索规则：简单事实用 web_search；技术资料、官方文档、选型、最新 API/产品信息、需要可靠来源的汇总，必须优先用 research_web。不要只根据 web_search 的 snippet 下结论；若 research_web 返回的来源质量低，换 query 或限定官方域名重搜。
+- 汇总网络资料时：优先引用 official_docs / standard_or_project_docs / source_repo / paper；明确区分一手来源和二手来源；若来源之间冲突，指出冲突而不是强行合并。
 - 查找历史对话：有明确日期用 date 参数精确查，描述模糊用 query 语义检索，不说"我不记得了"
 - 查询誓约进度：用 vow_summary（详细数据）或 list_vows（完整列表）；创建誓约前必须先调 list_vows
 - 发现用户回避某话题时，直接点出

@@ -2,18 +2,12 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import type { Vow, VowSubGoal } from '@/lib/spirit/memory'
+import { addDays, dateInTZ, recentDates, weekStart } from '@/lib/spirit/time'
 
-function todayStr() { return new Date().toISOString().slice(0, 10) }
+function todayStr() { return dateInTZ() }
 
 function getWeekStartLocal(): string {
-  const utc8str = new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })
-  const d = new Date(utc8str)
-  const day = d.getDay() || 7
-  d.setDate(d.getDate() - day + 1)
-  const y  = d.getFullYear()
-  const m  = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${dd}`
+  return weekStart()
 }
 
 function daysLeft(deadline: string): number {
@@ -33,10 +27,10 @@ function calcStreak(dates: string[]): number {
   const today = todayStr()
   const start = set.has(today) ? today : [...dates].sort().pop()!
   let streak  = 0
-  const d     = new Date(start + 'T00:00:00Z')
-  while (set.has(d.toISOString().slice(0, 10))) {
+  let cursor = start
+  while (set.has(cursor)) {
     streak++
-    d.setUTCDate(d.getUTCDate() - 1)
+    cursor = addDays(cursor, -1)
   }
   return streak
 }
@@ -80,11 +74,7 @@ function ProgressRing({ pct, size = 36, color }: { pct: number; size?: number; c
 
 function StreakDots({ dates }: { dates: string[] }) {
   const set  = new Set(dates)
-  const dots = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (6 - i))
-    const s = d.toISOString().slice(0, 10)
-    return { date: s, done: set.has(s) }
-  })
+  const dots = recentDates(7).reverse().map(s => ({ date: s, done: set.has(s) }))
   return (
     <div style={{ display: 'flex', gap: 2, marginTop: 4 }}>
       {dots.map(({ date, done }) => (

@@ -15,8 +15,14 @@ import {
 import { hybridSearch, type HybridDoc } from '../hybrid-search'
 import { HybridSearchService, makeEmbedder } from '../hybrid-search-service'
 import { summarizeChunksForQuery }      from '../summarize'
+import { createHash } from 'crypto'
 
 const blogSearch = new HybridSearchService(getBlogEmbeddings, saveBlogEmbeddings)
+
+function convDocId(date: string, role: string, content: string): string {
+  const hash = createHash('sha1').update(`${date}\n${role}\n${content}`).digest('hex').slice(0, 16)
+  return `${date}::${hash}`
+}
 
 registerTool({
   name:        'read_user_blogs',
@@ -230,7 +236,7 @@ registerTool({
     conv.messages.forEach((msg, idx) => {
       if (!msg.content.trim()) return
       docs.push({
-        id:   `${conv.date}::${idx}`,
+        id:   convDocId(conv.date, msg.role, msg.content),
         text: msg.content,
         meta: { date: conv.date, msgIndex: idx, role: msg.role, content: msg.content, timestamp: msg.timestamp ?? '' },
       })
@@ -240,7 +246,7 @@ registerTool({
 
   // 读 embedding 缓存
   const cache    = getConvEmbeddings()
-  const cacheMap = new Map(cache.map(e => [`${e.date}::${e.msgIndex}`, e.vec]))
+  const cacheMap = new Map(cache.map(e => [e.id ?? convDocId(e.date, e.role, e.content), e.vec]))
 
   const results = await hybridSearch(docs, query as string, {
     topK:        k,
@@ -249,10 +255,9 @@ registerTool({
     onNewVecs:   newVecs => {
       for (const { id, vec } of newVecs) {
         cacheMap.set(id, vec)
-        const [d, i] = id.split('::')
         const docMeta = docs.find(doc => doc.id === id)?.meta
         if (docMeta) {
-          cache.push({ date: d, msgIndex: Number(i), role: docMeta.role as 'user'|'assistant', content: docMeta.content, timestamp: docMeta.timestamp, vec })
+          cache.push({ id, date: docMeta.date, msgIndex: docMeta.msgIndex, role: docMeta.role as 'user'|'assistant', content: docMeta.content, timestamp: docMeta.timestamp, vec })
         }
       }
       saveConvEmbeddings(cache)

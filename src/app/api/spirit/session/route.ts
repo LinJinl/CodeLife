@@ -6,12 +6,13 @@
 import { NextRequest }                                      from 'next/server'
 import { getConversation, saveConversation, saveSessionSummary, getAllConversationDates } from '@/lib/spirit/memory'
 import { summarizeSession }                                 from '@/lib/spirit/summarize'
+import { dateInTZ }                                          from '@/lib/spirit/time'
 import config                                               from '../../../../../codelife.config'
 
 export const runtime = 'nodejs'
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10)
+  return dateInTZ()
 }
 
 export async function GET(req: NextRequest) {
@@ -34,10 +35,14 @@ export async function POST(req: NextRequest) {
   // 异步生成当日摘要（不阻塞响应）
   if (config.spirit?.enabled && config.spirit.apiKey) {
     const { buildChatModel } = await import('@/lib/spirit/langgraph/agents')
+    const { runPostConversationMemoryJobs } = await import('@/lib/spirit/memory-jobs')
     const reflectModel = config.spirit.reflectModel ?? config.spirit.model
-    summarizeSession(date, body.messages as never, buildChatModel(reflectModel))
+    const model = buildChatModel(reflectModel)
+    summarizeSession(date, body.messages as never, model)
       .then(s => saveSessionSummary(s))
       .catch(e => console.warn('[session] 摘要生成失败:', e))
+    runPostConversationMemoryJobs(date, body.messages as never, model)
+      .catch(e => console.warn('[session] 记忆提炼任务失败:', e))
   }
 
   return Response.json({ ok: true })

@@ -15,6 +15,7 @@ import {
   type SkillCard,
 } from './memory'
 import { cosine } from './hybrid-search'
+import { dateInTZ, weekStart } from './time'
 
 // ── LLM Schema ────────────────────────────────────────────────
 
@@ -113,9 +114,16 @@ export async function extractSkills(
       ),
     ])
 
-    const today    = new Date().toISOString().slice(0, 10)
-    const newCards = result.skills.map((s, i) => ({
-      id:         `skill_${today.replace(/-/g, '')}_${String(i + 1).padStart(3, '0')}`,
+    const today    = dateInTZ()
+    const todayPrefix = `skill_${today.replace(/-/g, '')}_`
+    let seq = existing
+      .filter(s => s.id.startsWith(todayPrefix))
+      .map(s => Number(s.id.slice(todayPrefix.length)))
+      .filter(Number.isFinite)
+      .reduce((max, n) => Math.max(max, n), 0)
+
+    const newCards = result.skills.map((s) => ({
+      id:         `${todayPrefix}${String(++seq).padStart(3, '0')}`,
       title:      s.title,
       insight:    s.insight,
       body:       s.body,
@@ -203,12 +211,7 @@ export function shouldExtractSkills(): boolean {
   const skills = getSkills()
   if (skills.length === 0) return true
 
-  const now      = new Date()
-  const weekStart = new Date(now)
-  weekStart.setDate(now.getDate() - now.getDay())  // 本周日（或周一，取决于 locale）
-  weekStart.setHours(0, 0, 0, 0)
-
   const latest = skills[skills.length - 1]
   const latestDate = new Date(latest.createdAt)
-  return latestDate < weekStart
+  return latestDate < new Date(`${weekStart()}T00:00:00+08:00`)
 }

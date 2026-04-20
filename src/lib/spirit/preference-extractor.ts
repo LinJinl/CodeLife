@@ -12,9 +12,10 @@ import { z }                           from 'zod'
 import type { ChatOpenAI }             from '@langchain/openai'
 import {
   getRecentConversations,
-  getPreferences, savePreferences,
+  getPreferences, replacePreferences,
   type Preference, type PreferenceCategory,
 } from './memory'
+import { dateInTZ } from './time'
 
 // ── LLM Schema ────────────────────────────────────────────────
 
@@ -92,7 +93,7 @@ export async function extractPreferences(
 
   try {
     const llm    = model.withStructuredOutput(prefUpdateSchema)
-    const today  = new Date().toISOString().slice(0, 10)
+    const today  = dateInTZ()
     const result = await llm.invoke([
       new SystemMessage(PREF_SYSTEM),
       new HumanMessage(
@@ -118,6 +119,8 @@ export async function extractPreferences(
         ex.confidence      = Math.min(1, Math.max(0, u.confidence))
         ex.evidence        = [...new Set([...ex.evidence, ...(u.newEvidence ?? [today])])]
         ex.counterEvidence = u.counterEvidence ?? undefined
+        ex.volatility      = ex.volatility ?? 'moderate'
+        ex.source          = ex.source ?? 'extractor'
         ex.lastSeen        = today
         ex.updatedAt       = now
         changedCount++
@@ -133,6 +136,9 @@ export async function extractPreferences(
           confidence:      Math.min(1, Math.max(0, u.confidence)),
           evidence:        u.newEvidence ?? [today],
           counterEvidence: u.counterEvidence ?? undefined,
+          volatility:      'moderate',
+          source:          'extractor',
+          confirmed:       false,
           lastSeen:        today,
           updatedAt:       now,
         })
@@ -148,7 +154,7 @@ export async function extractPreferences(
     }
 
     const final = Array.from(updatedMap.values())
-    if (changedCount > 0) savePreferences(final)
+    if (changedCount > 0) replacePreferences(final)
     return { totalCount: final.length, changedCount }
   } catch (err) {
     console.warn('[preference-extractor] failed:', err)

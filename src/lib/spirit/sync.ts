@@ -11,8 +11,10 @@ import {
   saveWeeklyPattern, getWeeklyPatterns, getPersona, savePersona,
   getCumulativePoints, calcVowStreak, getWeekStart,
 } from './memory'
+import { addDays, dateInTZ, weekStart } from './time'
 import type { DailyLog, DailyActivity, WeeklyPattern, PersonaProfile, VowSubGoal } from './memory'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
+import { createHash } from 'crypto'
 
 // 避免在 sync 里直接引入 data.ts（会带着 unstable_cache 的服务端约束）
 // 改为直接调用 adapter，sync 只在 API route 里执行
@@ -27,7 +29,12 @@ import {
 } from './memory'
 
 function todayStr(): string {
-  return new Date().toISOString().slice(0, 10)
+  return dateInTZ()
+}
+
+function convDocId(date: string, role: string, content: string): string {
+  const hash = createHash('sha1').update(`${date}\n${role}\n${content}`).digest('hex').slice(0, 16)
+  return `${date}::${hash}`
 }
 
 /** 计算连续天数（从今天往前数有日志的天数） */
@@ -35,12 +42,10 @@ function calcStreak(todayDate: string): number {
   let streak = 0
   const logs = getRecentDailyLogs(90)
   const logSet = new Set(logs.map(l => l.date))
-  const d = new Date(todayDate)
-  // 从昨天往前
-  d.setDate(d.getDate() - 1)
-  while (logSet.has(d.toISOString().slice(0, 10))) {
+  let cursor = addDays(todayDate, -1)
+  while (logSet.has(cursor)) {
     streak++
-    d.setDate(d.getDate() - 1)
+    cursor = addDays(cursor, -1)
   }
   return streak + 1  // 加上今天
 }
@@ -56,11 +61,13 @@ export async function syncToday(): Promise<DailyLog> {
     const posts = await blog.getPosts()
 
     // 全量 metadata 缓存到本地，供器灵搜索时离线使用
+    const existingCache = getBlogPostsCache()
+    const existingMap = new Map(existingCache.map(p => [p.slug, p]))
     const cached: CachedBlogPost[] = posts.map(p => ({
       slug:        p.slug,
       title:       p.title,
       excerpt:     p.excerpt ?? '',
-      content:     '',
+      content:     existingMap.get(p.slug)?.content ?? '',
       category:    p.category,
       tags:        p.tags ?? [],
       wordCount:   p.wordCount,
@@ -266,7 +273,7 @@ export async function generateWeeklyPattern(llm: SimpleLLM): Promise<WeeklyPatte
 
   // 检查本周 pattern 是否已存在
   const existing = getWeeklyPatterns(1)
-  const weekStart = getMonday(new Date()).toISOString().slice(0, 10)
+  const weekStart = weekStartInCurrentTZ()
   if (existing.length > 0 && existing[existing.length - 1].weekStart === weekStart) {
     return existing[existing.length - 1]  // 本周已生成，幂等
   }
@@ -355,7 +362,7 @@ export async function updatePersona(llm: SimpleLLM): Promise<PersonaProfile | nu
       recurringIssues: parsed.recurringIssues ?? current.recurringIssues,
       milestones:      parsed.milestones      ?? current.milestones,
       currentPhase:    parsed.currentPhase    ?? current.currentPhase,
-      lastUpdated:     new Date().toISOString().slice(0, 10),
+      lastUpdated:     dateInTZ(),
     }
     savePersona(persona)
     return persona
@@ -451,12 +458,12 @@ export async function preIndexEmbeddings(llm: SimpleLLM): Promise<{ blogNew: num
   try {
     const convs    = getRecentConversations(7)
     const cache    = getConvEmbeddings()
-    const cacheMap = new Map(cache.map(e => [`${e.date}::${e.msgIndex}`, e.vec]))
+    const cacheMap = new Map(cache.map(e => [e.id ?? convDocId(e.date, e.role, e.content), e.vec]))
 
     const missing: { key: string; date: string; msgIndex: number; role: string; content: string; timestamp: string }[] = []
     for (const conv of convs) {
       conv.messages.forEach((msg, idx) => {
-        const key = `${conv.date}::${idx}`
+        const key = convDocId(conv.date, msg.role, msg.content)
         if (msg.content.trim() && !cacheMap.has(key)) {
           missing.push({ key, date: conv.date, msgIndex: idx, role: msg.role, content: msg.content, timestamp: msg.timestamp ?? '' })
         }
@@ -467,7 +474,7 @@ export async function preIndexEmbeddings(llm: SimpleLLM): Promise<{ blogNew: num
       const vecs = await embedder.embedDocuments(missing.map(m => m.content))
       missing.forEach((m, i) => {
         cacheMap.set(m.key, vecs[i])
-        cache.push({ date: m.date, msgIndex: m.msgIndex, role: m.role as 'user'|'assistant', content: m.content, timestamp: m.timestamp, vec: vecs[i] })
+        cache.push({ id: m.key, date: m.date, msgIndex: m.msgIndex, role: m.role as 'user'|'assistant', content: m.content, timestamp: m.timestamp, vec: vecs[i] })
       })
       saveConvEmbeddings(cache)
       convNew = missing.length
@@ -484,7 +491,7 @@ export function shouldGenerateWeeklyPattern(): boolean {
   const today = new Date().getDay()  // 0=Sun, 1=Mon
   if (today !== 1) return false      // 只在周一触发
   const existing = getWeeklyPatterns(1)
-  const weekStart = getMonday(new Date()).toISOString().slice(0, 10)
+  const weekStart = weekStartInCurrentTZ()
   return existing.length === 0 || existing[existing.length - 1].weekStart !== weekStart
 }
 
@@ -495,10 +502,6 @@ export function shouldUpdatePersona(): boolean {
   return (Date.now() - new Date(p.lastUpdated).getTime()) / 86400000 >= 7
 }
 
-function getMonday(date: Date): Date {
-  const d   = new Date(date)
-  const day = d.getDay() || 7
-  d.setDate(d.getDate() - day + 1)
-  d.setHours(0, 0, 0, 0)
-  return d
+function weekStartInCurrentTZ(): string {
+  return weekStart(dateInTZ())
 }

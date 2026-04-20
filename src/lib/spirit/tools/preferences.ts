@@ -6,6 +6,7 @@
 
 import { registerTool }         from '../registry'
 import { getPreferences, savePreferences, type Preference, type PreferenceCategory } from '../memory'
+import { dateInTZ } from '../time'
 
 // ── list_preferences ──────────────────────────────────────────
 
@@ -85,12 +86,22 @@ registerTool(
           type:        'string',
           description: '如果有矛盾行为，简短描述反例',
         },
+        volatility: {
+          type:        'string',
+          enum:        ['stable', 'moderate', 'volatile'],
+          description: '偏好稳定性。临时/当前任务有效用 volatile，不进入常驻记忆。',
+        },
+        source: {
+          type:        'string',
+          enum:        ['explicit', 'observed', 'manual', 'extractor'],
+          description: '来源：用户明确表达 explicit；观察推断 observed；人工编辑 manual；离线提炼 extractor。',
+        },
       },
     },
   },
   async (args) => {
     const prefs = getPreferences()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = dateInTZ()
     const now   = new Date().toISOString()
 
     // id 匹配优先，其次 key 匹配
@@ -103,6 +114,9 @@ registerTool(
       ex.category        = args.category as PreferenceCategory
       ex.evidence        = [...new Set([...ex.evidence, today])]
       ex.counterEvidence = (args.counter_evidence as string | undefined) ?? ex.counterEvidence
+      ex.volatility      = (args.volatility as Preference['volatility'] | undefined) ?? ex.volatility ?? 'moderate'
+      ex.source          = (args.source as Preference['source'] | undefined) ?? ex.source ?? 'observed'
+      ex.confirmed       = ex.confirmed || args.source === 'explicit'
       ex.lastSeen        = today
       ex.updatedAt       = now
     } else {
@@ -116,6 +130,9 @@ registerTool(
         confidence:      Math.min(1, Math.max(0, args.confidence as number)),
         evidence:        [today],
         counterEvidence: (args.counter_evidence as string | undefined),
+        volatility:      (args.volatility as Preference['volatility'] | undefined) ?? 'moderate',
+        source:          (args.source as Preference['source'] | undefined) ?? 'observed',
+        confirmed:       args.source === 'explicit',
         lastSeen:        today,
         updatedAt:       now,
       } satisfies Preference)

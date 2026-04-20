@@ -7,6 +7,7 @@ import { MessageItem } from './spirit/MessageItem'
 import { useSpiritChat } from './spirit/useSpiritChat'
 import type { Message } from './spirit/types'
 import type { SkillCardData } from '@/lib/spirit/protocol'
+import { addDays, dateInTZ } from '@/lib/spirit/time'
 
 // ── 偏好类型（与 memory.ts 保持一致，不引入服务端模块）────────────────
 interface PrefItem {
@@ -28,14 +29,13 @@ const PREF_CATEGORY_LABEL: Record<string, string> = {
   work:          '节律',
 }
 
-function todayStr() { return new Date().toISOString().slice(0, 10) }
+function todayStr() { return dateInTZ() }
 
 /** 日期标签显示：今日 / 昨日 / M/D */
 function dateLabel(date: string): string {
   const today = todayStr()
   if (date === today) return '今日'
-  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
-  if (date === yesterday.toISOString().slice(0, 10)) return '昨日'
+  if (date === addDays(today, -1)) return '昨日'
   const [, m, d] = date.split('-')
   return `${parseInt(m)}/${parseInt(d)}`
 }

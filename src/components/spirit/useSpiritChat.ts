@@ -5,8 +5,9 @@ import { usePathname } from 'next/navigation'
 import type { SpiritEvent, LibraryCard } from '@/lib/spirit/protocol'
 import type { Message, MCPInfo, SlashCommand } from './types'
 import { SLASH_COMMANDS } from './types'
+import { dateInTZ } from '@/lib/spirit/time'
 
-function todayStr() { return new Date().toISOString().slice(0, 10) }
+function todayStr() { return dateInTZ() }
 
 export function useSpiritChat(open: boolean) {
   const pathname = usePathname()

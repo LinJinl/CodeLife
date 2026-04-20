@@ -11,7 +11,11 @@ import { registerTool }  from '../registry'
 import {
   getPersona, savePersona,
   getSkills,  saveSkills,
+  getSkillEmbeddings, saveSkillEmbeddings,
 }                        from '../memory'
+import { cosine } from '../hybrid-search'
+import { makeEmbedder } from '../hybrid-search-service'
+import { dateInTZ, timeInTZ } from '../time'
 import fs   from 'fs'
 import path from 'path'
 
@@ -43,8 +47,8 @@ registerTool({
   },
 }, async ({ content, tag }) => {
   fs.mkdirSync(NOTES_DIR, { recursive: true })
-  const today  = new Date().toISOString().slice(0, 10)
-  const time   = new Date().toTimeString().slice(0, 5)
+  const today  = dateInTZ()
+  const time   = timeInTZ()
   const file   = path.join(NOTES_DIR, `${today}.md`)
   const tagStr = tag ? ` [${tag}]` : ''
   const line   = `\n## ${time}${tagStr}\n${content as string}\n`
@@ -82,7 +86,7 @@ registerTool({
 }, async ({ type, observation }) => {
   const persona = getPersona()
   const obs     = (observation as string).trim()
-  const now     = new Date().toISOString().slice(0, 10)
+  const now     = dateInTZ()
 
   if (type === 'trait') {
     if (!persona.observedTraits.includes(obs)) {
@@ -115,7 +119,8 @@ registerTool({
 - 讨论出某个值得记住的设计决策或经验教训
 - 修士自己明确要求"把这个记下来"
 
-不要保存显而易见的东西，只保存有实际价值、未来会用到的洞察。`,
+不要保存显而易见的东西，只保存有实际价值、未来会用到的洞察。
+工具会自动检查相似技能卡；若已存在高度相似内容，会合并到旧卡 userNotes，而不是新建重复卡。`,
   parameters: {
     type: 'object',
     properties: {
@@ -127,8 +132,34 @@ registerTool({
   },
 }, async ({ title, insight, tags = [] }) => {
   const cards  = getSkills()
-  const now    = new Date().toISOString().slice(0, 10)
-  const id     = `skill_${now.replace(/-/g, '')}_${String(cards.length + 1).padStart(3, '0')}`
+  const now    = dateInTZ()
+  const text   = `${title as string}。${insight as string}`
+  const similar = await findSimilarSkill(text)
+  if (similar && similar.score >= 0.86) {
+    const idx = cards.findIndex(c => c.id === similar.id)
+    if (idx >= 0) {
+      const note = `\n\n[${now}] 相似洞察合并：${insight as string}`
+      cards[idx] = {
+        ...cards[idx],
+        tags:      [...new Set([...cards[idx].tags, ...((tags as string[]) ?? [])])],
+        userNotes: `${cards[idx].userNotes ?? ''}${note}`.trim(),
+        editedAt:  new Date().toISOString(),
+      }
+      saveSkills(cards)
+      return {
+        content: JSON.stringify(cards[idx]),
+        brief:   `发现相似技能卡「${cards[idx].title}」，已合并`,
+      }
+    }
+  }
+
+  const todayPrefix = `skill_${now.replace(/-/g, '')}_`
+  const seq = cards
+    .filter(c => c.id.startsWith(todayPrefix))
+    .map(c => Number(c.id.slice(todayPrefix.length)))
+    .filter(Number.isFinite)
+    .reduce((max, n) => Math.max(max, n), 0) + 1
+  const id = `${todayPrefix}${String(seq).padStart(3, '0')}`
   const newCard = {
     id,
     title:      title as string,
@@ -141,9 +172,48 @@ registerTool({
 
   cards.push(newCard)
   saveSkills(cards)
+  await cacheSkillEmbedding(id, text)
   // content 为 JSON，供 stream.ts 解析并推送 skill_card 事件到前端
   return {
     content: JSON.stringify(newCard),
     brief:   `技能卡「${title}」已保存`,
   }
 }, { displayName: '保存技能卡', domain: 'knowledge' })
+
+async function findSimilarSkill(text: string): Promise<{ id: string; score: number } | null> {
+  const cards = getSkills()
+  if (cards.length === 0) return null
+
+  try {
+    const cache = getSkillEmbeddings()
+    const cacheMap = new Map(cache.map(e => [e.id, e.vec]))
+    const missing = cards.filter(c => !cacheMap.has(c.id))
+    const embedder = makeEmbedder()
+
+    if (missing.length > 0) {
+      const vecs = await embedder.embedDocuments(missing.map(c => `${c.title}。${c.insight}`))
+      missing.forEach((c, i) => cacheMap.set(c.id, vecs[i]))
+      saveSkillEmbeddings(Array.from(cacheMap.entries()).map(([id, vec]) => ({ id, vec })))
+    }
+
+    const queryVec = await embedder.embedQuery(text)
+    return cards
+      .map(c => ({ id: c.id, score: cosine(queryVec, cacheMap.get(c.id) ?? []) }))
+      .sort((a, b) => b.score - a.score)[0] ?? null
+  } catch {
+    const lowered = text.toLowerCase()
+    const hit = cards.find(c => lowered.includes(c.title.toLowerCase()) || c.title.toLowerCase().includes(lowered))
+    return hit ? { id: hit.id, score: 0.9 } : null
+  }
+}
+
+async function cacheSkillEmbedding(id: string, text: string) {
+  try {
+    const cache = getSkillEmbeddings()
+    if (cache.some(e => e.id === id)) return
+    const vec = await makeEmbedder().embedQuery(text)
+    saveSkillEmbeddings([...cache, { id, vec }])
+  } catch {
+    // Embedding 缓存失败不影响技能卡写入。
+  }
+}

@@ -107,6 +107,7 @@ function describeToolInput(name: string, input: unknown): string | undefined {
   switch (name) {
     case 'run_shell':         return typeof a.command === 'string' ? a.command : undefined
     case 'web_search':        return typeof a.query   === 'string' ? `"${a.query}"` : undefined
+    case 'research_web':      return typeof a.question === 'string' ? `"${a.question}"` : undefined
     case 'fetch_url':         return typeof a.url     === 'string' ? a.url : undefined
     case 'search_library':
     case 'search_blog_posts':
@@ -243,7 +244,7 @@ export async function* translateToSpiritEvents(
 
       // 提取可点击链接（web_search / fetch_url）
       let links: { title: string; url: string }[] | undefined
-      if (event.name === 'web_search') {
+      if (event.name === 'web_search' || event.name === 'research_web') {
         try {
           const srcSection = baseStr.includes('\n来源：\n')
             ? baseStr.split('\n来源：\n')[1]

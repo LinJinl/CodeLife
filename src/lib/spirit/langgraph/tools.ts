@@ -71,7 +71,8 @@ export async function inferDomainsWithAI(
 ): Promise<ToolDomain[]> {
   if (!userMessage.trim()) return []
   try {
-    const classifierModel = model.bind({ stream: false }) as unknown as ChatOpenAI
+    const classifierModel = (model as unknown as { bind(args: Record<string, unknown>): unknown })
+      .bind({ stream: false }) as ChatOpenAI
     const classifier      = classifierModel.withStructuredOutput(DOMAIN_SCHEMA)
     const invoke          = classifier.invoke([
       new SystemMessage(CLASSIFIER_SYSTEM),

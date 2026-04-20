@@ -13,6 +13,8 @@ import {
   getWeeklyPatterns,
   getSkills,
 }                             from '../memory'
+import fs from 'fs'
+import path from 'path'
 
 // ── get_daily_logs ────────────────────────────────────────────
 
@@ -103,3 +105,46 @@ registerTool({
     brief:   `共 ${skills.length} 张技能卡`,
   }
 }, { displayName: '读取技能卡', domain: 'memory' })
+
+// ── search_notes ─────────────────────────────────────────────
+
+const NOTES_DIR = path.resolve(process.cwd(), 'content/spirit/notes')
+
+registerTool({
+  name:        'search_notes',
+  description: '检索随手记 write_note 写入的历史笔记。用于用户问“之前帮我记了什么”“查一下笔记里关于 X 的内容”。',
+  parameters: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: '检索关键词，可选；不填则返回最近笔记' },
+      limit: { type: 'number', description: '返回条数，默认 8' },
+    },
+  },
+}, async ({ query, limit = 8 }) => {
+  if (!fs.existsSync(NOTES_DIR)) return { content: '暂无笔记', brief: '无笔记' }
+  const files = fs.readdirSync(NOTES_DIR)
+    .filter(f => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+    .sort()
+    .reverse()
+
+  const entries: { date: string; text: string }[] = []
+  for (const file of files) {
+    const date = file.replace('.md', '')
+    const text = fs.readFileSync(path.join(NOTES_DIR, file), 'utf-8')
+    for (const block of text.split(/\n(?=## )/).filter(Boolean)) {
+      entries.push({ date, text: block.trim() })
+    }
+  }
+
+  const q = typeof query === 'string' ? query.trim().toLowerCase() : ''
+  const filtered = q
+    ? entries.filter(e => e.text.toLowerCase().includes(q))
+    : entries
+  const result = filtered.slice(0, Math.min(Number(limit), 20))
+
+  if (result.length === 0) return { content: `未找到与「${query}」相关的笔记`, brief: '无匹配' }
+  return {
+    content: result.map(e => `[${e.date}]\n${e.text}`).join('\n\n---\n\n'),
+    brief:   `找到 ${result.length} 条笔记`,
+  }
+}, { displayName: '检索笔记', domain: 'memory' })

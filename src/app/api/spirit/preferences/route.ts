@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse }  from 'next/server'
-import { getPreferences, savePreferences } from '@/lib/spirit/memory'
+import { getPreferences, replacePreferences } from '@/lib/spirit/memory'
 import config                              from '../../../../../codelife.config'
 
 export const runtime = 'nodejs'
@@ -40,6 +40,8 @@ export async function PATCH(req: NextRequest) {
     description?:     string
     confidence?:      number
     counterEvidence?: string
+    volatility?:      'stable' | 'moderate' | 'volatile'
+    confirmed?:       boolean
   }
 
   const prefs = getPreferences()
@@ -51,9 +53,12 @@ export async function PATCH(req: NextRequest) {
     ...(body.description     !== undefined && { description:     body.description }),
     ...(body.confidence      !== undefined && { confidence:      Math.min(1, Math.max(0, body.confidence)) }),
     ...(body.counterEvidence !== undefined && { counterEvidence: body.counterEvidence }),
+    ...(body.volatility      !== undefined && { volatility:      body.volatility }),
+    ...(body.confirmed       !== undefined && { confirmed:       body.confirmed }),
+    source: 'manual',
     updatedAt: new Date().toISOString(),
   }
-  savePreferences(prefs)
+  replacePreferences(prefs)
   return NextResponse.json({ ok: true, pref: prefs[idx] })
 }
 
@@ -64,6 +69,6 @@ export async function DELETE(req: NextRequest) {
   if (idx < 0) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
   const [removed] = prefs.splice(idx, 1)
-  savePreferences(prefs)
+  replacePreferences(prefs)
   return NextResponse.json({ ok: true, key: removed.key })
 }

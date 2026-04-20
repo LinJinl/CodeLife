@@ -17,6 +17,7 @@ import config                  from '../../../../../codelife.config'
 import { encodeEvent }         from '@/lib/spirit/protocol'
 import { getCompiledGraph, getRecursionLimit } from '@/lib/spirit/langgraph/graph'
 import { getDailyLog, getConversation }        from '@/lib/spirit/memory'
+import { dateInTZ }                            from '@/lib/spirit/time'
 import { syncToday }           from '@/lib/spirit/sync'
 import { quickClassify }       from '@/lib/spirit/langgraph/classify'
 import { getQingxiaoDomains, inferDomainsWithAI, type ToolDomain } from '@/lib/spirit/langgraph/tools'
@@ -28,6 +29,27 @@ import { translateToSpiritEvents }             from '@/lib/spirit/langgraph/stre
 
 export const runtime = 'nodejs'
 
+function requiredMemoryHint(text: string): SystemMessage | null {
+  const rules: string[] = []
+  if (/近况|最近状态|这几天|今天.*(做|状态)|晨省/.test(text)) {
+    rules.push('必须先调用 get_daily_logs，默认 days=7，再基于结果回答。')
+  }
+  if (/上周|这个月|规律|趋势|状态怎么样/.test(text)) {
+    rules.push('必须调用 get_weekly_patterns 获取周期规律；若涉及近期状态，同时调用 get_daily_logs。')
+  }
+  if (/誓约|目标|进度|打卡/.test(text)) {
+    rules.push('必须先调用 vow_summary 或 list_vows 获取真实誓约进度。')
+  }
+  if (/之前总结|有没有.*洞察|技能卡|学过|记过/.test(text)) {
+    rules.push('必须先调用 search_skills 或 list_skills；若用户问随手记，同时调用 search_notes。')
+  }
+  if (/上次|之前.*聊|哪天.*聊|历史对话/.test(text)) {
+    rules.push('必须先调用 search_conversations；有明确日期时使用 date 精确查询。')
+  }
+  if (rules.length === 0) return null
+  return new SystemMessage(`[强制记忆检索门控]\n${rules.join('\n')}\n不要凭 Tier 1 摘要直接回答。`)
+}
+
 /**
  * 把今日已保存对话的最后 N 条作为真实 BaseMessage prepend 到消息前
  * 仅在前端消息尚未包含今日历史时注入（避免单次长会话重复）
@@ -35,7 +57,7 @@ export const runtime = 'nodejs'
 function loadTodayHistory(
   currentMessages: { role: string; content: string }[],
 ): BaseMessage[] {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = dateInTZ()
   const conv  = getConversation(today)
   if (conv.messages.length === 0) return []
 
@@ -63,7 +85,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 今日 DailyLog 不存在则先同步（保证记忆有数据）
-  const today = new Date().toISOString().slice(0, 10)
+  const today = dateInTZ()
 
   // 把前端消息历史转换为 LangChain BaseMessage
   const currentMsgs = messages.map(m => {
@@ -78,6 +100,8 @@ export async function POST(req: NextRequest) {
 
   const lastUserMsg  = langchainMessages.findLast(m => m._getType() === 'human')
   const lastUserText = (typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '')
+  const memoryHint   = requiredMemoryHint(lastUserText)
+  const graphMessages = memoryHint ? [memoryHint, ...langchainMessages] : langchainMessages
   const msgPreview   = lastUserText.slice(0, 80)
 
   // 短续接消息（如"已确认，请继续执行"）域推断时补充近期用户消息上下文，
@@ -124,7 +148,7 @@ export async function POST(req: NextRequest) {
         const recursionLimit = getRecursionLimit(DEFAULT_PARALLEL)
 
         const eventStream = graph.streamEvents(
-          { messages: langchainMessages, usePlanner },
+          { messages: graphMessages, usePlanner },
           { version: 'v2', recursionLimit },
         )
 

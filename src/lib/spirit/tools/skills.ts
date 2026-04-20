@@ -3,7 +3,7 @@
  */
 
 import { registerTool }      from '../registry'
-import { getSkills, saveSkills, getSkillEmbeddings, saveSkillEmbeddings, type SkillCard } from '../memory'
+import { getSkills, saveSkills, replaceSkills, getSkillEmbeddings, saveSkillEmbeddings, type SkillCard } from '../memory'
 import { hybridSearch, type HybridDoc }  from '../hybrid-search'
 
 registerTool({
@@ -125,7 +125,7 @@ registerTool({
     return { content: `未找到技能卡 ${id}，请用 list_skills 确认 ID。`, brief: '未找到' }
   }
   const [removed] = cards.splice(idx, 1)
-  saveSkills(cards)
+  replaceSkills(cards)
   return {
     content: `已删除技能卡「${removed.title}」（ID: ${id}）`,
     brief:   `已删除「${removed.title}」`,

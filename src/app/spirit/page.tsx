@@ -6,14 +6,14 @@ import { useRouter } from 'next/navigation'
 import { MessageItem }  from '@/components/spirit/MessageItem'
 import { useSpiritChat } from '@/components/spirit/useSpiritChat'
 import type { Message } from '@/components/spirit/types'
+import { addDays, dateInTZ } from '@/lib/spirit/time'
 
-function todayStr() { return new Date().toISOString().slice(0, 10) }
+function todayStr() { return dateInTZ() }
 
 function fmtDate(d: string) {
   const today = todayStr()
   if (d === today) return { main: '今日', sub: '' }
-  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
-  if (d === yesterday.toISOString().slice(0, 10)) return { main: '昨日', sub: '' }
+  if (d === addDays(today, -1)) return { main: '昨日', sub: '' }
   const [y, m, day] = d.split('-')
   const now = new Date()
   const isSameYear = parseInt(y) === now.getFullYear()

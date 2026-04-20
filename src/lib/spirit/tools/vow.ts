@@ -9,10 +9,11 @@
 
 import { registerTool }               from '../registry'
 import {
-  upsertVow, getVows, saveVows, getActiveVows,
+  upsertVow, getVows, replaceVows, getActiveVows,
   calcVowStreak, getCumulativePoints, getWeekStart,
 } from '../memory'
 import type { Vow, VowMetric, VowSubGoal } from '../memory'
+import { dateInTZ } from '../time'
 
 // ── 公用 metric 说明 ──────────────────────────────────────────
 
@@ -33,7 +34,7 @@ const DAILY_METRICS: VowMetric[] = ['blog_daily', 'leetcode_daily', 'github_dail
 // ── 进度描述工具函数 ──────────────────────────────────────────
 
 function describeGoalProgress(g: VowSubGoal): string {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = dateInTZ()
   switch (g.metric) {
     case 'blog_daily':
     case 'leetcode_daily':
@@ -184,7 +185,7 @@ metric 类型说明：
 }, async ({ title, normalized, deadline, motivation, tags, graceCount, subGoals }) => {
   const vow: Vow = {
     id:         `vow_${Date.now()}`,
-    createdAt:  new Date().toISOString().slice(0, 10),
+    createdAt:  dateInTZ(),
     deadline:   deadline as string,
     raw:        normalized as string,
     normalized: normalized as string,
@@ -310,7 +311,7 @@ registerTool({
   }
 
   vows[idx] = vow
-  saveVows(vows)
+  replaceVows(vows)
   const goalLines = vow.subGoals.map(g =>
     `- ${g.description}（${METRIC_LABEL[g.metric]}）\n  → ${describeGoalProgress(g)}`
   ).join('\n')
@@ -337,7 +338,7 @@ registerTool({
   const idx     = vows.findIndex(v => v.id === (vowId as string))
   if (idx < 0)  return { content: '誓约不存在', brief: '未找到' }
   const [removed] = vows.splice(idx, 1)
-  saveVows(vows)
+  replaceVows(vows)
   return {
     content: `誓约「${removed.title}」（ID: ${removed.id}）已删除。`,
     brief:   `「${removed.title}」已删除`,
@@ -363,7 +364,7 @@ registerTool({
   const vows = getActiveVows()
   if (vows.length === 0) return { content: '当前无活跃誓约。', brief: '无活跃誓约' }
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = dateInTZ()
   const lines = vows.map(v => {
     const daysLeft  = Math.ceil((new Date(v.deadline).getTime() - Date.now()) / 86400000)
     const grace     = (v.graceCount ?? 0) > 0 ? `　宽限：${v.graceUsed ?? 0}/${v.graceCount}` : ''
