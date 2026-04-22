@@ -31,14 +31,18 @@
 
 | 层级 | 内容 | 更新方式 |
 |------|------|----------|
-| 今日状态 | 当日修炼摘要 + 誓约进度 | 每次对话自动注入 |
+| 今日状态 | 当日修炼摘要 + 誓约进度 | 每次对话轻量注入 |
+| 今日对话上下文 | 较早对话压缩摘录 + 最近原文消息 | Context Builder 按预算打包 |
 | 每日日志 | 各类活动的完整记录 | 每日同步时生成 |
 | 周规律 | AI 归纳的修炼模式与隐患 | 每周一自动生成 |
 | 人格档案 | 长期观察到的偏好与习惯 | 每 7 天更新 |
-| 偏好画像 | 从对话提炼的行为特征（置信度加权） | 对话中持续积累 |
-| 技能卡 | 从深度技术对话提炼的完整 Markdown 文档 | 每次深度对话后 |
+| 偏好画像 | 已确认的行为特征（置信度加权） | 明确授权或候选晋升 |
+| 技能卡 | 已确认的完整 Markdown 技术洞察 | 明确保存或候选晋升 |
+| 候选记忆 | 自动观察到的偏好、技能洞察等 | 先进入候选区，确认后晋升 |
 
-这六层记忆在每次对话前自动注入系统提示——器灵开口就已经知道你是谁，最近在做什么，上次聊到哪里。
+器灵不会把所有历史原样塞进提示词。服务端会先判断本轮问题需要哪类记忆，再按预算注入摘要、最近原文和相关 Memory Pack。自动观察到的长期记忆默认先进入候选区，避免把一次性推测直接写进长期画像。
+
+更完整的设计见 [`MEMORY_SYSTEM.md`](./MEMORY_SYSTEM.md)。
 
 ### 不止于聊天
 
@@ -53,6 +57,8 @@
 **写操作（需确认）** — 收藏文章到藏经阁、创建/更新誓约、记录技术洞察
 
 **MCP 扩展** — `/引法器` 命令在运行时动态装载任意 MCP 工具包
+
+**画图** — 支持 Mermaid 图表。器灵可调用 Mermaid MCP 校验/辅助生成图表，最终回答中的 Mermaid 代码块会在对话框内直接渲染成 SVG。
 
 ### 自适应多 Agent 架构
 
@@ -93,6 +99,14 @@
 | `/寻典` | 自然语言检索藏经阁 |
 | `/引此页` | 将当前页面内容注入对话上下文 |
 | `/引法器 <包名>` | 动态装载 MCP 工具包 |
+
+**示例：让器灵画图**
+
+```text
+帮我画一张用户登录流程图，用 Mermaid 展示。
+```
+
+回答中的 `mermaid` 代码块会在对话框内直接渲染；若 Mermaid MCP 已加载，器灵会优先用它校验图表。
 
 **示例：问今天该做什么**
 
@@ -155,6 +169,7 @@ cp .env.local.example .env.local
 | `SPIRIT_API_KEY` | 器灵 AI 的 API Key（OpenAI 兼容） | 使用器灵时 |
 | `SPIRIT_BASE_URL` | 自定义端点（DeepSeek / Ollama 等） | 可选 |
 | `SPIRIT_MODEL` | 模型名称（默认 `gpt-4o-mini`） | 可选 |
+| `MERMAID_CHART_TOKEN` | Mermaid Chart 集成 Token；不填也可使用核心 Mermaid MCP 渲染/校验能力 | 可选 |
 | `NOTION_TOKEN` | Notion Integration Token | 使用 Notion 博客时 |
 | `NOTION_DATABASE_ID` | Notion 博客数据库 ID | 使用 Notion 博客时 |
 | `GITHUB_TOKEN` | GitHub Personal Access Token | 展示 GitHub 数据时 |
@@ -218,8 +233,9 @@ npm run dev   # 默认端口 3002
 | 今日日志 | 每次对话自动触发 | `content/spirit/logs/{date}.json` |
 | 周规律分析 | 每周一 / 手动 POST `/api/spirit/sync` | `content/spirit/patterns/{week}.json` |
 | 人格档案更新 | 每 7 天 / 手动 | `content/spirit/persona.json` |
-| 技能卡提炼 | 有未处理对话时 / 手动 POST `/api/spirit/skills` | `content/spirit/skills/` |
-| 偏好画像提炼 | 有未处理对话时 / 手动 POST `/api/spirit/preferences` | `content/spirit/preferences.json` |
+| 技能卡提炼 | 有未处理对话时 / 手动 POST `/api/spirit/skills` | 先写入 `content/spirit/candidates/` |
+| 偏好画像提炼 | 有未处理对话时 / 手动 POST `/api/spirit/preferences` | 先写入 `content/spirit/candidates/` |
+| 候选记忆审核 | GET/POST `/api/spirit/candidates` | promote 后写入长期记忆 |
 
 ---
 
