@@ -41,6 +41,26 @@ function hostnameOf(url: string): string {
   catch { return '' }
 }
 
+function normalizeDomain(input: string): string | null {
+  const raw = input.trim()
+  if (!raw) return null
+  try {
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
+    const host = new URL(withProtocol).hostname.replace(/^www\./, '')
+    return host || null
+  } catch {
+    const host = raw.split('/')[0].replace(/^www\./, '')
+    return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host) ? host : null
+  }
+}
+
+function normalizeDomains(domains?: string[]): string[] | undefined {
+  const normalized = [...new Set((domains ?? [])
+    .map(normalizeDomain)
+    .filter((d): d is string => Boolean(d)))]
+  return normalized.length > 0 ? normalized : undefined
+}
+
 function classifySource(url: string, title: string): { type: string; score: number } {
   const host = hostnameOf(url)
   const u = url.toLowerCase()
@@ -110,8 +130,10 @@ async function tavilySearch({
     include_answer: true,
   }
   if (includeRaw) body.include_raw_content = true
-  if (includeDomains?.length) body.include_domains = includeDomains
-  if (excludeDomains?.length) body.exclude_domains = excludeDomains
+  const normalizedIncludes = normalizeDomains(includeDomains)
+  const normalizedExcludes = normalizeDomains(excludeDomains)
+  if (normalizedIncludes?.length) body.include_domains = normalizedIncludes
+  if (normalizedExcludes?.length) body.exclude_domains = normalizedExcludes
 
   const res = await fetch(TAVILY_URL, {
     method:  'POST',
@@ -158,6 +180,43 @@ function rankResults(results: (TavilyResult & { query: string })[]): RankedResul
     .sort((a, b) => b.qualityScore - a.qualityScore)
 }
 
+async function resilientSearch(q: string, opts: {
+  includeDomains?: string[]
+  excludeDomains?: string[]
+}): Promise<{ results: (TavilyResult & { query: string })[]; warnings: string[] }> {
+  const warnings: string[] = []
+
+  try {
+    const data = await tavilySearch({
+      query: q,
+      maxResults: 6,
+      depth: 'advanced',
+      includeRaw: true,
+      includeDomains: opts.includeDomains,
+      excludeDomains: opts.excludeDomains,
+    })
+    return { results: (data.results ?? []).map(r => ({ ...r, query: q })), warnings }
+  } catch (advancedErr) {
+    warnings.push(`${q} advanced 失败：${advancedErr instanceof Error ? advancedErr.message : String(advancedErr)}`)
+  }
+
+  try {
+    const data = await tavilySearch({
+      query: q,
+      maxResults: 6,
+      depth: 'basic',
+      includeRaw: false,
+      includeDomains: opts.includeDomains,
+      excludeDomains: opts.excludeDomains,
+    })
+    warnings.push(`${q} 已降级为 basic`)
+    return { results: (data.results ?? []).map(r => ({ ...r, query: q })), warnings }
+  } catch (basicErr) {
+    warnings.push(`${q} basic 失败：${basicErr instanceof Error ? basicErr.message : String(basicErr)}`)
+    return { results: [], warnings }
+  }
+}
+
 registerTool({
   name:        'web_search',
   description: '快速联网搜索。适合简单事实查询；技术调研、资料搜集、需要高质量来源时优先使用 research_web。',
@@ -181,8 +240,8 @@ registerTool({
       query: String(query),
       maxResults: Number(max_results) || 5,
       depth: search_depth === 'advanced' ? 'advanced' : 'basic',
-      includeDomains: include_domains as string[] | undefined,
-      excludeDomains: exclude_domains as string[] | undefined,
+      includeDomains: normalizeDomains(include_domains as string[] | undefined),
+      excludeDomains: normalizeDomains(exclude_domains as string[] | undefined),
     })
   } catch (err) {
     return { content: err instanceof Error ? err.message : String(err), brief: '搜索失败' }
@@ -231,27 +290,30 @@ registerTool({
     : buildQueryVariants(String(question))
 
   const defaultExcludes = [
-    'csdn.net', '51cto.com', 'cloud.tencent.com/developer/article',
+    'csdn.net', '51cto.com', 'cloud.tencent.com',
     'geeksforgeeks.org', 'w3schools.com',
   ]
-  const excludes = [...new Set([...(exclude_domains as string[] | undefined ?? []), ...defaultExcludes])]
+  const excludes = normalizeDomains([...(exclude_domains as string[] | undefined ?? []), ...defaultExcludes])
+  const includes = normalizeDomains(include_domains as string[] | undefined)
+
+  const batches = await Promise.all(qList.map(q =>
+    resilientSearch(q, { includeDomains: includes, excludeDomains: excludes })
+  ))
+
+  const warnings = batches.flatMap(b => b.warnings)
+  const ranked = rankResults(batches.flatMap(b => b.results))
 
   try {
-    const batches = await Promise.all(qList.map(async q => {
-      const data = await tavilySearch({
-        query: q,
-        maxResults: 6,
-        depth: 'advanced',
-        includeRaw: true,
-        includeDomains: include_domains as string[] | undefined,
-        excludeDomains: excludes,
-      })
-      return (data.results ?? []).map(r => ({ ...r, query: q }))
-    }))
-
-    const ranked = rankResults(batches.flat())
     const selected = ranked.slice(0, Math.min(Number(max_sources) || 5, 8))
-    if (selected.length === 0) return { content: '未找到可用的高质量来源。', brief: '无高质量来源' }
+    if (selected.length === 0) {
+      return {
+        content:
+          `未找到可用的高质量来源。\n` +
+          `搜索策略：${qList.join(' | ')}\n` +
+          `失败诊断：\n${warnings.map(w => `- ${w}`).join('\n') || '- Tavily 未返回结果'}`,
+        brief: '无高质量来源',
+      }
+    }
 
     const evidence = selected.map((r, i) => ({
       id: i + 1,
@@ -273,7 +335,8 @@ registerTool({
       content:
         `问题：${question}\n` +
         `搜索策略：${qList.join(' | ')}\n` +
-        `证据来源按质量排序。优先相信 official_docs / standard_or_project_docs / source_repo / paper；谨慎对待 secondary/seo 来源。\n\n` +
+        `证据来源按质量排序。优先相信 official_docs / standard_or_project_docs / source_repo / paper；谨慎对待 secondary/seo 来源。\n` +
+        (warnings.length > 0 ? `检索警告：\n${warnings.map(w => `- ${w}`).join('\n')}\n\n` : '\n') +
         `来源：\n${sourceLines}`,
       brief: `深度检索 ${evidence.length} 个来源：${topTitles}`,
     }
