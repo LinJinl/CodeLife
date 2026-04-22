@@ -5,6 +5,7 @@
 import { registerTool }      from '../registry'
 import { getSkills, saveSkills, replaceSkills, getSkillEmbeddings, saveSkillEmbeddings, type SkillCard } from '../memory'
 import { hybridSearch, type HybridDoc }  from '../hybrid-search'
+import { formatMemoryPack, type MemoryPackItem } from '../memory-pack'
 
 registerTool({
   name:        'search_skills',
@@ -54,10 +55,19 @@ registerTool({
   }
 
   const skillMap = new Map<string, SkillCard>(skills.map(s => [s.id, s]))
-  const matched  = results.map(r => {
+  const matched: MemoryPackItem[] = results.map(r => {
     const s = skillMap.get(r.id)!
-    return `【${s.title}】（${s.sourceDate}）\n${s.insight}\n标签：${s.tags.join('、')}`
-  }).join('\n\n---\n\n')
+    return {
+      type: 'skill',
+      id: s.id,
+      date: s.sourceDate,
+      title: s.title,
+      summary: `${s.insight}${s.tags.length ? ` 标签：${s.tags.join('、')}` : ''}`,
+      source: s.sourceDate,
+      score: r.rrfScore,
+      confidence: 0.75,
+    }
+  })
 
   // 更新被引用卡片的 useCount
   const updatedSkills = skills.map(s =>
@@ -67,7 +77,7 @@ registerTool({
   saveSkills(updatedSkills)
 
   return {
-    content: matched,
+    content: formatMemoryPack(matched, '技能卡检索结果'),
     brief:   `找到 ${results.length} 条知识洞察`,
   }
 }, { displayName: '检索知识洞察', domain: 'knowledge' })

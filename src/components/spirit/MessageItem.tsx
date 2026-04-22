@@ -1,9 +1,121 @@
 'use client'
 
-import { memo, useState } from 'react'
+import { Children, isValidElement, memo, useEffect, useId, useState } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { LibraryCard, SkillCardData } from '@/lib/spirit/protocol'
 import type { Message } from './types'
+
+function MermaidDiagram({ code }: { code: string }) {
+  const reactId = useId().replace(/:/g, '')
+  const [svg, setSvg] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function renderDiagram() {
+      const source = code.trim()
+      if (!source) return
+      try {
+        const mermaid = (await import('mermaid')).default
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: 'dark',
+          themeVariables: {
+            darkMode: true,
+            background: 'transparent',
+            mainBkg: '#101614',
+            primaryColor: '#17231f',
+            primaryTextColor: '#e6ddc8',
+            primaryBorderColor: '#4a7d5e',
+            lineColor: '#b99a4b',
+            secondaryColor: '#1d2c27',
+            tertiaryColor: '#221b18',
+          },
+        })
+        const result = await mermaid.render(`spirit_mermaid_${reactId}`, source)
+        if (!cancelled) {
+          setSvg(result.svg)
+          setError('')
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSvg('')
+          setError(err instanceof Error ? err.message : String(err))
+        }
+      }
+    }
+
+    renderDiagram()
+    return () => { cancelled = true }
+  }, [code, reactId])
+
+  return (
+    <div style={{
+      margin: '10px 0',
+      padding: 12,
+      border: '1px solid rgba(74,125,94,0.28)',
+      background: 'linear-gradient(135deg, rgba(74,125,94,0.08), rgba(212,168,67,0.04))',
+      overflowX: 'auto',
+    }}>
+      {svg ? (
+        <div
+          style={{ minWidth: 280 }}
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      ) : error ? (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--seal)', whiteSpace: 'pre-wrap' }}>
+          Mermaid 渲染失败：{error}
+        </div>
+      ) : (
+        <div style={{ fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--ink-dim)' }}>
+          图表渲染中…
+        </div>
+      )}
+      <details style={{ marginTop: 8 }}>
+        <summary style={{
+          cursor: 'pointer',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 9,
+          color: 'var(--ink-dim)',
+          letterSpacing: 1,
+        }}>
+          Mermaid 源码
+        </summary>
+        <pre style={{
+          margin: '8px 0 0',
+          whiteSpace: 'pre-wrap',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 10,
+          color: 'var(--ink-dim)',
+        }}>{code}</pre>
+      </details>
+    </div>
+  )
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      components={{
+        pre({ children }) {
+          const child = Children.toArray(children).find(isValidElement)
+          if (child) {
+            const element = child as ReactElement<{ className?: string; children?: ReactNode }>
+            if (/\blanguage-mermaid\b/.test(element.props.className ?? '')) {
+              return <MermaidDiagram code={String(element.props.children ?? '').replace(/\n$/, '')} />
+            }
+          }
+          return <pre>{children}</pre>
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
+}
 
 // ── 流式 Markdown 渲染 ────────────────────────────────────────
 // 在段落边界（\n\n）处切割：
@@ -24,7 +136,7 @@ function StreamingMarkdown({ content }: { content: string }) {
   }
   return (
     <>
-      <ReactMarkdown>{complete}</ReactMarkdown>
+      <MarkdownContent content={complete} />
       {tail && <span style={{ whiteSpace: 'pre-wrap' }}>{tail}</span>}
     </>
   )
@@ -452,7 +564,7 @@ export const MessageItem = memo(function MessageItem({
           {msg.content
             ? (streaming
                 ? <StreamingMarkdown content={msg.content} />
-                : <ReactMarkdown>{msg.content}</ReactMarkdown>)
+                : <MarkdownContent content={msg.content} />)
             : (!streaming ? <span style={{ color: 'var(--ink-trace)' }}>…</span> : null)
           }
           {streaming && phase === 'replying' && (

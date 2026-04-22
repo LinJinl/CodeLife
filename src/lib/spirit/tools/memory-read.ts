@@ -13,6 +13,7 @@ import {
   getWeeklyPatterns,
   getSkills,
 }                             from '../memory'
+import { clampSummary, formatMemoryPack, type MemoryPackItem } from '../memory-pack'
 import fs from 'fs'
 import path from 'path'
 
@@ -37,17 +38,31 @@ registerTool({
   const logs = getRecentDailyLogs(Math.min((days as number) || 7, 30))
   if (logs.length === 0) return { content: '暂无记录', brief: '无日志' }
 
-  const lines = logs.map(log => {
-    if (log.activities.length === 0) return `${log.date}：无修炼`
+  const items: MemoryPackItem[] = logs.map(log => {
+    if (log.activities.length === 0) {
+      return {
+        type: 'daily_log',
+        id: `daily_log:${log.date}`,
+        date: log.date,
+        summary: `无修炼；连续第 ${log.streakDay} 日；总 +${log.totalPoints}`,
+        confidence: 1,
+      }
+    }
     const parts = log.activities.map(a => {
       const label  = { blog: '著述', leetcode: '铸剑', github: '声望' }[a.type] ?? a.type
       const detail = a.titles?.length ? `（${a.titles.join('、')}）` : ''
       return `${label}×${a.count}${detail} +${a.points}修为`
     })
-    return `${log.date}：${parts.join('　')}　第${log.streakDay}日　总 +${log.totalPoints}`
+    return {
+      type: 'daily_log',
+      id: `daily_log:${log.date}`,
+      date: log.date,
+      summary: `${parts.join('；')}；连续第 ${log.streakDay} 日；总 +${log.totalPoints}`,
+      confidence: 1,
+    }
   })
   return {
-    content: lines.join('\n'),
+    content: formatMemoryPack(items, '修炼日志'),
     brief:   `近 ${logs.length} 天日志`,
   }
 }, { displayName: '读取修炼日志', domain: 'memory' })
@@ -72,12 +87,16 @@ registerTool({
   const patterns = getWeeklyPatterns((weeks as number) || 4)
   if (patterns.length === 0) return { content: '暂无周期记录', brief: '无规律' }
 
-  const lines = patterns.map(p => {
-    const flags = p.flags.length ? `\n  隐患：${p.flags.join('、')}` : ''
-    return `[${p.weekStart}周] ${p.narrative}${flags}`
-  })
+  const items: MemoryPackItem[] = patterns.map(p => ({
+    type: 'weekly_pattern',
+    id: `weekly_pattern:${p.weekStart}`,
+    date: p.weekStart,
+    title: `${p.weekStart} 周规律`,
+    summary: `${p.narrative}${p.flags.length ? ` 隐患：${p.flags.join('、')}` : ''}`,
+    confidence: 0.8,
+  }))
   return {
-    content: `BRIEF::近 ${patterns.length} 周规律\n${lines.join('\n\n')}`,
+    content: formatMemoryPack(items, '周规律'),
     brief:   `近 ${patterns.length} 周规律`,
   }
 }, { displayName: '读取周规律', domain: 'memory' })
@@ -97,11 +116,17 @@ registerTool({
   if (skills.length === 0) return { content: '暂无技能卡', brief: '无技能卡' }
 
   const recent = skills.slice(-30)  // 最近 30 张
-  const lines  = recent.map(s =>
-    `【${s.title}】${s.insight}（来源：${s.sourceDate}）`
-  )
+  const items: MemoryPackItem[] = recent.map(s => ({
+    type: 'skill',
+    id: s.id,
+    date: s.sourceDate,
+    title: s.title,
+    summary: `${s.insight}${s.tags.length ? ` 标签：${s.tags.join('、')}` : ''}`,
+    source: s.sourceDate,
+    confidence: 0.75,
+  }))
   return {
-    content: `BRIEF::共 ${skills.length} 张技能卡\n${lines.join('\n\n')}`,
+    content: formatMemoryPack(items, '技能卡'),
     brief:   `共 ${skills.length} 张技能卡`,
   }
 }, { displayName: '读取技能卡', domain: 'memory' })
@@ -143,8 +168,16 @@ registerTool({
   const result = filtered.slice(0, Math.min(Number(limit), 20))
 
   if (result.length === 0) return { content: `未找到与「${query}」相关的笔记`, brief: '无匹配' }
+  const items: MemoryPackItem[] = result.map((e, idx) => ({
+    type: 'note',
+    id: `note:${e.date}:${idx}`,
+    date: e.date,
+    summary: clampSummary(e.text, 520),
+    source: `content/spirit/notes/${e.date}.md`,
+    confidence: 0.9,
+  }))
   return {
-    content: result.map(e => `[${e.date}]\n${e.text}`).join('\n\n---\n\n'),
+    content: formatMemoryPack(items, '随手记'),
     brief:   `找到 ${result.length} 条笔记`,
   }
 }, { displayName: '检索笔记', domain: 'memory' })

@@ -12,6 +12,7 @@
 import { NextRequest } from 'next/server'
 import config from '../../../../../codelife.config'
 import { getLoadedMCPAdapters, getRuntimeServers, addMCPServerRuntime } from '@/lib/spirit/mcp-loader'
+import { ensureConfiguredMCPServersLoaded } from '@/lib/spirit/mcp-runtime'
 import { getToolRegistry } from '@/lib/spirit/registry'
 import { invalidateToolCache } from '@/lib/spirit/langgraph/tools'
 import { invalidateAgentCache } from '@/lib/spirit/langgraph/agents'
@@ -22,7 +23,16 @@ import type { MCPServerConfig } from '@/lib/config'
 
 export const runtime = 'nodejs'
 
+function redactServer(server: MCPServerConfig): MCPServerConfig {
+  if (!server.headers) return server
+  return {
+    ...server,
+    headers: Object.fromEntries(Object.keys(server.headers).map(key => [key, '[redacted]'])),
+  }
+}
+
 export async function GET() {
+  const preload = await ensureConfiguredMCPServersLoaded()
   const adapters   = getLoadedMCPAdapters()
   const runtime    = getRuntimeServers()
   const allTools   = getToolRegistry()   // 返回全部工具（builtin + mcp）
@@ -30,8 +40,9 @@ export async function GET() {
 
   return Response.json({
     allowDynamicInstall: config.spirit?.allowDynamicInstall ?? false,
-    configured,
-    runtimeAdded: runtime,
+    configured: configured.map(redactServer),
+    runtimeAdded: runtime.map(redactServer),
+    preload,
     adapters,
     tools: allTools,
   })

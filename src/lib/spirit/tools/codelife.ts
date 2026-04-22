@@ -15,6 +15,7 @@ import {
 import { hybridSearch, type HybridDoc } from '../hybrid-search'
 import { HybridSearchService, makeEmbedder } from '../hybrid-search-service'
 import { summarizeChunksForQuery }      from '../summarize'
+import { formatMemoryPack, type MemoryPackItem } from '../memory-pack'
 import { createHash } from 'crypto'
 
 const blogSearch = new HybridSearchService(getBlogEmbeddings, saveBlogEmbeddings)
@@ -211,10 +212,19 @@ registerTool({
   if (date) {
     const conv = getConversation(date as string)
     if (conv.messages.length === 0) return { content: `${date} 无对话记录`, brief: '无记录' }
-    const text = conv.messages.map(m =>
-      `[${m.timestamp ?? ''}] ${m.role === 'user' ? '修士' : '器灵'}：${m.content}`
-    ).join('\n\n')
-    return { content: text, brief: `${date} 共 ${conv.messages.length} 条` }
+    const items: MemoryPackItem[] = conv.messages.slice(-20).map((m, idx) => ({
+      type: 'conversation',
+      id: `conversation:${date}:${idx}`,
+      date: date as string,
+      title: m.role === 'user' ? '用户消息' : '助手消息',
+      summary: `${m.timestamp ? `${m.timestamp} ` : ''}${m.role === 'user' ? '修士' : '器灵'}：${m.content}`,
+      source: `content/spirit/conversations/${date}.json`,
+      confidence: 1,
+    }))
+    return {
+      content: formatMemoryPack(items, `${date} 对话记录`),
+      brief: `${date} 共 ${conv.messages.length} 条`,
+    }
   }
 
   // ── 无 query：列出有记录的日期 ───────────────────────────
@@ -275,9 +285,17 @@ registerTool({
   // 用 LLM 将检索到的碎片消息压缩为针对 query 的聚焦回答
   const { buildChatModel } = await import('../langgraph/agents')
   const summary = await summarizeChunksForQuery(chunks, query as string, buildChatModel())
+  const items: MemoryPackItem[] = [{
+    type: 'conversation',
+    id: `conversation_search:${createHash('sha1').update(String(query)).digest('hex').slice(0, 12)}`,
+    title: String(query),
+    summary,
+    source: `近 ${lookback} 天 / ${chunks.length} 条历史消息`,
+    confidence: 0.75,
+  }]
 
   return {
-    content: summary,
+    content: formatMemoryPack(items, '对话检索结果'),
     brief:   `综合 ${chunks.length} 条历史消息（近 ${lookback} 天）`,
   }
 }, { displayName: '检索对话历史', domain: 'memory', agents: ['planner_agent'] })

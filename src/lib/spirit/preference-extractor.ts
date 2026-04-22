@@ -1,10 +1,9 @@
 /**
  * 用户偏好提炼模块
  *
- * 核心设计：update-in-place（区别于技能卡的 append）
- * 每次提炼 LLM 拿到完整的已有偏好列表 + 近期对话，
- * 输出对每条偏好的置信度修正、新发现的偏好，以及需要退役的条目。
- * 置信度随观测次数持续收敛，逼近用户的真实习惯。
+ * 核心设计：自动观察不直接写长期偏好。
+ * LLM 拿到完整的已有偏好列表 + 近期对话，输出建议更新、新发现和退役项；
+ * 这些结果先进入 Candidate Memory，用户确认后再晋升。
  */
 
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
@@ -12,10 +11,11 @@ import { z }                           from 'zod'
 import type { ChatOpenAI }             from '@langchain/openai'
 import {
   getRecentConversations,
-  getPreferences, replacePreferences,
+  getPreferences,
   type Preference, type PreferenceCategory,
 } from './memory'
 import { dateInTZ } from './time'
+import { addMemoryCandidates } from './candidate-memory'
 
 // ── LLM Schema ────────────────────────────────────────────────
 
@@ -107,55 +107,70 @@ export async function extractPreferences(
       return { totalCount: existing.length, changedCount: 0 }
     }
 
-    const now        = new Date().toISOString()
-    const updatedMap = new Map<string, Preference>(existing.map(p => [p.id, { ...p }]))
-    let   changedCount = 0
+    const candidates: Parameters<typeof addMemoryCandidates>[0] = []
 
     for (const u of result.updates) {
-      if (u.id && updatedMap.has(u.id)) {
-        // 更新已有
-        const ex    = updatedMap.get(u.id)!
-        ex.description     = u.description
-        ex.confidence      = Math.min(1, Math.max(0, u.confidence))
-        ex.evidence        = [...new Set([...ex.evidence, ...(u.newEvidence ?? [today])])]
-        ex.counterEvidence = u.counterEvidence ?? undefined
-        ex.volatility      = ex.volatility ?? 'moderate'
-        ex.source          = ex.source ?? 'extractor'
-        ex.lastSeen        = today
-        ex.updatedAt       = now
-        changedCount++
-      } else if (!u.id) {
-        // 新增
-        const seq   = updatedMap.size + 1
-        const newId = `pref_${today.replace(/-/g, '')}_${String(seq).padStart(3, '0')}`
-        updatedMap.set(newId, {
-          id:              newId,
-          category:        u.category as PreferenceCategory,
-          key:             u.key,
-          description:     u.description,
-          confidence:      Math.min(1, Math.max(0, u.confidence)),
-          evidence:        u.newEvidence ?? [today],
-          counterEvidence: u.counterEvidence ?? undefined,
-          volatility:      'moderate',
-          source:          'extractor',
-          confirmed:       false,
-          lastSeen:        today,
-          updatedAt:       now,
+      if (u.id && existing.some(p => p.id === u.id)) {
+        const ex = existing.find(p => p.id === u.id)
+        candidates.push({
+          proposedType: 'preference',
+          payload: {
+            id: u.id,
+            key: u.key,
+            category: u.category as PreferenceCategory,
+            description: u.description,
+            confidence: Math.min(1, Math.max(0, u.confidence)),
+            evidence: u.newEvidence ?? [today],
+            counterEvidence: u.counterEvidence ?? undefined,
+            volatility: ex?.volatility ?? 'moderate',
+            source: 'extractor',
+          } satisfies Partial<Preference>,
+          reason: `自动提炼建议更新已有偏好：${u.key}`,
+          evidence: (u.newEvidence ?? [today]).map(date => ({ type: 'conversation', id: date, date })),
+          confidence: Math.min(1, Math.max(0, u.confidence)),
         })
-        changedCount++
+      } else {
+        candidates.push({
+          proposedType: 'preference',
+          payload: {
+            ...(u.id ? { id: u.id } : {}),
+            key: u.key,
+            category: u.category as PreferenceCategory,
+            description: u.description,
+            confidence: Math.min(1, Math.max(0, u.confidence)),
+            evidence: u.newEvidence ?? [today],
+            counterEvidence: u.counterEvidence ?? undefined,
+            volatility: 'moderate',
+            source: 'extractor',
+          } satisfies Partial<Preference>,
+          reason: u.id
+            ? `自动提炼建议更新偏好但未找到原 id，按候选处理：${u.key}`
+            : `自动提炼发现新偏好：${u.key}`,
+          evidence: (u.newEvidence ?? [today]).map(date => ({ type: 'conversation', id: date, date })),
+          confidence: Math.min(1, Math.max(0, u.confidence)),
+        })
       }
     }
 
     for (const id of (result.retire ?? [])) {
-      if (updatedMap.has(id)) {
-        updatedMap.delete(id)
-        changedCount++
+      const ex = existing.find(p => p.id === id)
+      if (ex) {
+        candidates.push({
+          proposedType: 'preference',
+          payload: {
+            ...ex,
+            confidence: 0,
+            counterEvidence: '自动提炼建议退役该偏好',
+          } satisfies Preference,
+          reason: `自动提炼建议退役偏好：${ex.key}`,
+          evidence: [{ type: 'conversation', id: today, date: today }],
+          confidence: 0.5,
+        })
       }
     }
 
-    const final = Array.from(updatedMap.values())
-    if (changedCount > 0) replacePreferences(final)
-    return { totalCount: final.length, changedCount }
+    const changedCount = candidates.length > 0 ? addMemoryCandidates(candidates, today).length : 0
+    return { totalCount: existing.length, changedCount }
   } catch (err) {
     console.warn('[preference-extractor] failed:', err)
     return { totalCount: existing.length, changedCount: 0 }

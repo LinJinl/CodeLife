@@ -86,6 +86,7 @@ export interface MCPServerConfig {
   transport: MCPTransport
   // HTTP 模式
   url?: string
+  headers?: Record<string, string>
   // stdio 模式
   command?: string
   args?: string[]

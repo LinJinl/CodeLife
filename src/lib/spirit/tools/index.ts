@@ -26,9 +26,18 @@ import { loadMCPServers } from '../mcp-loader'
 
 if (config.spirit?.mcpServers?.length) {
   // 异步加载，不阻塞工具注册（失败单个不影响内置工具）
-  loadMCPServers(config.spirit.mcpServers).catch(err =>
-    console.error('[MCP] 批量加载失败:', err)
-  )
+  loadMCPServers(config.spirit.mcpServers)
+    .then(async () => {
+      const [{ invalidateToolCache }, { invalidateAgentCache }, { invalidateGraphCache }] = await Promise.all([
+        import('../langgraph/tools'),
+        import('../langgraph/agents'),
+        import('../langgraph/graph'),
+      ])
+      invalidateToolCache()
+      invalidateAgentCache()
+      invalidateGraphCache()
+    })
+    .catch(err => console.error('[MCP] 批量加载失败:', err))
 }
 
 // 重新导出注册表公共 API，调用方只需 import 这一个文件

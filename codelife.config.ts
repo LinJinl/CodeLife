@@ -161,13 +161,27 @@ export default defineConfig({
     allowDynamicInstall: true,
 
     // 从配置预加载的 MCP 服务器列表（随应用启动自动连接）
-    // transport: 'http'  → url 字段必填（连接已运行的 HTTP MCP server）
+    // transport: 'http'  → url 字段必填（连接已运行的 HTTP MCP server，可选 headers）
     // transport: 'stdio' → command + args 字段必填（按需 spawn 子进程）
     mcpServers: [
       // ── agents 字段说明 ────────────────────────────────────
       // 不填 agents（默认）→ 仅 qingxiao 可用（推荐，防止上下文过长）
       // agents: ['qingxiao', 'search_agent'] → 指定多个 agent 均可用
       // agents: ['*'] → 所有 agent 均可用（慎用）
+
+      // Mermaid AI MCP：生成、校验并渲染 Mermaid 图表。
+      // 核心 validate/render 工具无需认证；如果要接 Mermaid Chart 项目管理能力，
+      // 在 .env.local 配置 MERMAID_CHART_TOKEN，作为 Authorization header 传入。
+      {
+        name:      'Mermaid图表',
+        namespace: 'mermaid',
+        transport: 'http',
+        url:       'https://mcp.mermaid.ai/mcp',
+        ...(process.env.MERMAID_CHART_TOKEN
+          ? { headers: { Authorization: process.env.MERMAID_CHART_TOKEN } }
+          : {}),
+        agents: ['qingxiao'],
+      },
 
       // 示例：联网搜索增强（search_agent 和 qingxiao 均可用）
       // {

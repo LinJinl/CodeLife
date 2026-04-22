@@ -1,8 +1,8 @@
 /**
  * 技能提炼模块
  *
- * 每周分析近期对话，提炼可复用的知识洞察（SkillCard），持久化到 content/spirit/skills/。
- * 用 embedding cosine 去重，避免重复积累相似卡片。
+ * 每周分析近期对话，提炼可复用的知识洞察（SkillCard）。
+ * 自动提炼结果先进入 Candidate Memory，用户确认后再晋升到长期技能卡。
  */
 
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
@@ -10,12 +10,13 @@ import { z }                           from 'zod'
 import type { ChatOpenAI }             from '@langchain/openai'
 import {
   getRecentConversations,
-  getSkills, saveSkills,
+  getSkills,
   getSkillEmbeddings, saveSkillEmbeddings,
   type SkillCard,
 } from './memory'
 import { cosine } from './hybrid-search'
 import { dateInTZ, weekStart } from './time'
+import { addMemoryCandidates, getAllCandidates } from './candidate-memory'
 
 // ── LLM Schema ────────────────────────────────────────────────
 
@@ -134,10 +135,16 @@ export async function extractSkills(
     })) as SkillCard[]
 
     const deduped = await deduplicateSkills(newCards, existing)
-    const merged  = [...existing, ...deduped]
-
-    if (deduped.length > 0) saveSkills(merged)
-    return { cards: merged, newCount: deduped.length }
+    if (deduped.length > 0) {
+      addMemoryCandidates(deduped.map(card => ({
+        proposedType: 'skill',
+        payload: card,
+        reason: `自动提炼发现新技能卡：${card.title}`,
+        evidence: [{ type: 'conversation', id: today, date: today }],
+        confidence: 0.75,
+      })), today)
+    }
+    return { cards: existing, newCount: deduped.length }
   } catch (err) {
     console.warn('[skill-extractor] extractSkills failed:', err)
     return { cards: existing, newCount: 0 }
@@ -181,12 +188,8 @@ async function deduplicateSkills(
     // 计算新卡片的 embedding
     const newVecs = await embedder.embedDocuments(newCards.map(s => s.title + '。' + s.insight))
 
-    // 持久化所有 embedding（已有 + 新的）
-    const allEntries = [
-      ...Array.from(cacheMap.entries()).map(([id, vec]) => ({ id, vec })),
-      ...newCards.map((s, i) => ({ id: s.id, vec: newVecs[i] })),
-    ]
-    saveSkillEmbeddings(allEntries)
+    // 只持久化已晋升技能卡的 embedding；候选卡片未确认前不污染正式缓存。
+    saveSkillEmbeddings(Array.from(cacheMap.entries()).map(([id, vec]) => ({ id, vec })))
 
     // 过滤：与任何已有卡片相似度过高的新卡片丢弃
     const existingVecs = existing.map(s => cacheMap.get(s.id)!)
@@ -209,9 +212,15 @@ async function deduplicateSkills(
  */
 export function shouldExtractSkills(): boolean {
   const skills = getSkills()
-  if (skills.length === 0) return true
+  const weekStartDate = new Date(`${weekStart()}T00:00:00+08:00`)
+  const recentSkillCandidate = getAllCandidates().some(candidate =>
+    candidate.proposedType === 'skill' &&
+    new Date(candidate.createdAt) >= weekStartDate
+  )
+
+  if (skills.length === 0) return !recentSkillCandidate
 
   const latest = skills[skills.length - 1]
   const latestDate = new Date(latest.createdAt)
-  return latestDate < new Date(`${weekStart()}T00:00:00+08:00`)
+  return latestDate < weekStartDate && !recentSkillCandidate
 }

@@ -16,8 +16,11 @@ import type { BaseMessage }    from '@langchain/core/messages'
 import config                  from '../../../../../codelife.config'
 import { encodeEvent }         from '@/lib/spirit/protocol'
 import { getCompiledGraph, getRecursionLimit } from '@/lib/spirit/langgraph/graph'
-import { getDailyLog, getConversation }        from '@/lib/spirit/memory'
+import { getDailyLog }                         from '@/lib/spirit/memory'
 import { dateInTZ }                            from '@/lib/spirit/time'
+import { packTodayHistory }                    from '@/lib/spirit/context'
+import { prefetchMemoryPack, type PrefetchedMemoryPack } from '@/lib/spirit/memory-gate'
+import { ensureConfiguredMCPServersLoaded }    from '@/lib/spirit/mcp-runtime'
 import { syncToday }           from '@/lib/spirit/sync'
 import { quickClassify }       from '@/lib/spirit/langgraph/classify'
 import { getQingxiaoDomains, inferDomainsWithAI, type ToolDomain } from '@/lib/spirit/langgraph/tools'
@@ -29,49 +32,32 @@ import { translateToSpiritEvents }             from '@/lib/spirit/langgraph/stre
 
 export const runtime = 'nodejs'
 
-function requiredMemoryHint(text: string): SystemMessage | null {
-  const rules: string[] = []
-  if (/近况|最近状态|这几天|今天.*(做|状态)|晨省/.test(text)) {
-    rules.push('必须先调用 get_daily_logs，默认 days=7，再基于结果回答。')
-  }
-  if (/上周|这个月|规律|趋势|状态怎么样/.test(text)) {
-    rules.push('必须调用 get_weekly_patterns 获取周期规律；若涉及近期状态，同时调用 get_daily_logs。')
-  }
-  if (/誓约|目标|进度|打卡/.test(text)) {
-    rules.push('必须先调用 vow_summary 或 list_vows 获取真实誓约进度。')
-  }
-  if (/之前总结|有没有.*洞察|技能卡|学过|记过/.test(text)) {
-    rules.push('必须先调用 search_skills 或 list_skills；若用户问随手记，同时调用 search_notes。')
-  }
-  if (/上次|之前.*聊|哪天.*聊|历史对话/.test(text)) {
-    rules.push('必须先调用 search_conversations；有明确日期时使用 date 精确查询。')
-  }
-  if (rules.length === 0) return null
-  return new SystemMessage(`[强制记忆检索门控]\n${rules.join('\n')}\n不要凭 Tier 1 摘要直接回答。`)
+function memoryGateHint(prefetch: PrefetchedMemoryPack): SystemMessage | null {
+  if (prefetch.intent.strength === 'none') return null
+  const tools = prefetch.intent.requiredTools.length
+    ? `候选补充工具：${prefetch.intent.requiredTools.join(' / ')}`
+    : '无候选补充工具'
+  const result = prefetch.items.length
+    ? `服务端已预取 ${prefetch.items.length} 条相关记忆。优先基于这些记忆回答；如证据不足或用户追问细节，再调用候选工具补充。`
+    : '服务端判断此问题需要记忆，但本地预取未找到足够结果；必须调用候选工具补充，不能凭印象回答。'
+  return new SystemMessage(`[记忆检索门控]\n意图：${prefetch.intent.intents.join(', ')}\n${result}\n${tools}`)
 }
 
-/**
- * 把今日已保存对话的最后 N 条作为真实 BaseMessage prepend 到消息前
- * 仅在前端消息尚未包含今日历史时注入（避免单次长会话重复）
- */
 function loadTodayHistory(
   currentMessages: { role: string; content: string }[],
 ): BaseMessage[] {
-  const today = dateInTZ()
-  const conv  = getConversation(today)
-  if (conv.messages.length === 0) return []
-
-  const saved = conv.messages.slice(-6)   // 最多取 6 条
-
-  // 去重：若前端消息已包含今日历史末尾内容（同一会话），不再 prepend
-  const lastSavedSnippet = saved.at(-1)?.content.slice(0, 50) ?? ''
-  if (lastSavedSnippet && currentMessages.some(m => m.content.includes(lastSavedSnippet))) {
-    return []
+  const packed = packTodayHistory(currentMessages)
+  const d = packed.diagnostics
+  if (d.totalSaved > 0) {
+    console.log(
+      `[spirit] today history pack: date=${d.date} selected=${d.selected}/${d.totalSaved} summarized=${d.summarized} chars=${d.chars} skipped=${d.skipped} truncated=${d.truncated} deduped=${d.deduped}`,
+    )
   }
 
-  return saved.map(m =>
+  const history = packed.messages.map(m =>
     m.role === 'user' ? new HumanMessage(m.content) : new AIMessage(m.content)
   )
+  return packed.summary ? [new SystemMessage(packed.summary), ...history] : history
 }
 
 export async function POST(req: NextRequest) {
@@ -100,8 +86,6 @@ export async function POST(req: NextRequest) {
 
   const lastUserMsg  = langchainMessages.findLast(m => m._getType() === 'human')
   const lastUserText = (typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '')
-  const memoryHint   = requiredMemoryHint(lastUserText)
-  const graphMessages = memoryHint ? [memoryHint, ...langchainMessages] : langchainMessages
   const msgPreview   = lastUserText.slice(0, 80)
 
   // 短续接消息（如"已确认，请继续执行"）域推断时补充近期用户消息上下文，
@@ -132,9 +116,28 @@ export async function POST(req: NextRequest) {
         const [, extraDomains] = await Promise.all([
           needSync ? syncToday().catch(() => {}) : Promise.resolve(),
           useAIDomains ? inferDomainsWithAI(inferText, model) : Promise.resolve([]),
+          ensureConfiguredMCPServersLoaded().catch(err =>
+            console.warn('[MCP] configured preload failed:', err instanceof Error ? err.message : err)
+          ),
         ])
 
         push(encodeEvent({ type: 'tool_done', name: '__init__' }))
+
+        const prefetchedMemory = prefetchMemoryPack(inferText)
+        const gateHint = memoryGateHint(prefetchedMemory)
+        const prefetchedMemoryMessage = prefetchedMemory.content
+          ? new SystemMessage(prefetchedMemory.content)
+          : null
+        const graphMessages = [
+          ...(gateHint ? [gateHint] : []),
+          ...(prefetchedMemoryMessage ? [prefetchedMemoryMessage] : []),
+          ...langchainMessages,
+        ]
+        if (prefetchedMemory.intent.strength !== 'none') {
+          console.log(
+            `[spirit] memory gate: intents=${prefetchedMemory.intent.intents.join(',')} items=${prefetchedMemory.items.length} tools=${prefetchedMemory.intent.requiredTools.join(',') || 'none'}`,
+          )
+        }
 
         // quickClassify：规则判断是否需要 Planner（Issue 4）
         const usePlanner = useAIDomains
