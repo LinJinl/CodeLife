@@ -413,12 +413,12 @@ export function upsertVow(vow: Vow) {
 
 // ── SkillCard ─────────────────────────────────────────────────
 
-/** 从对话中提炼的可复用知识洞察，每周生成一次 */
+/** 从对话中提炼的可复用能力卡，每周生成一次 */
 export interface SkillCard {
   id:          string    // skill_YYYYMMDD_NNN
   title:       string    // 简短标题（≤20字）
-  insight:     string    // 一句话摘要，用于列表预览和 prompt 注入
-  body?:       string    // 完整 markdown 内容（结构化的 skill 文档）
+  insight:     string    // 一句话能力描述，用于列表预览和 prompt 注入
+  body?:       string    // markdown 能力卡：适用场景 / 步骤 / 清单 / 反例 / 证据
   tags:        string[]
   sourceDate:  string    // 哪天对话提炼的
   createdAt:   string

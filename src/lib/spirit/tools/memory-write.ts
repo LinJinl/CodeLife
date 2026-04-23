@@ -4,7 +4,7 @@
  * 让 AI 在对话中主动写入记忆，而不依赖外部 sync 进程：
  *   write_note               — 自由文本追加到今日笔记文件
  *   update_persona_observation — 向人格档案追加观察
- *   save_skill_card          — 保存技术洞察卡片
+ *   save_skill_card          — 保存可复用能力卡
  */
 
 import { registerTool }  from '../registry'
@@ -112,25 +112,31 @@ registerTool({
 
 registerTool({
   name: 'save_skill_card',
-  description: `将对话中产生的技术洞察保存为技能卡，供未来对话使用。
+  description: `将对话中产生的可复用能力保存为技能卡，供未来对话调用。
+
+Skill 不是文档摘要。它应该是下一次遇到相似任务时可直接复用的操作规程、排查流程、设计决策框架或检查清单。
 
 使用时机：
 - 当前对话解决了一个有复用价值的技术问题
 - 讨论出某个值得记住的设计决策或经验教训
 - 修士自己明确要求"把这个记下来"
 
-不要保存显而易见的东西，只保存有实际价值、未来会用到的洞察。
+不要保存显而易见的东西，不要把搜索结果/文档内容改写成摘要。只有能指导未来行动的内容才保存。
 工具会自动检查相似技能卡；若已存在高度相似内容，会合并到旧卡 userNotes，而不是新建重复卡。`,
   parameters: {
     type: 'object',
     properties: {
       title:   { type: 'string', description: '标题（≤20字）' },
-      insight: { type: 'string', description: '洞察内容（2-4句，具体可操作）' },
+      insight: { type: 'string', description: '一句话能力描述：下次遇到什么任务时，用它怎么做（≤60字）' },
+      body:    {
+        type: 'string',
+        description: '可选。Markdown 能力卡，建议包含：适用场景、操作步骤、检查清单、反例、证据。不要写成长文总结。',
+      },
       tags:    { type: 'array', items: { type: 'string' }, description: '标签列表（可选）' },
     },
     required: ['title', 'insight'],
   },
-}, async ({ title, insight, tags = [] }) => {
+}, async ({ title, insight, body, tags = [] }) => {
   const cards  = getSkills()
   const now    = dateInTZ()
   const text   = `${title as string}。${insight as string}`
@@ -142,7 +148,7 @@ registerTool({
       cards[idx] = {
         ...cards[idx],
         tags:      [...new Set([...cards[idx].tags, ...((tags as string[]) ?? [])])],
-        userNotes: `${cards[idx].userNotes ?? ''}${note}`.trim(),
+        userNotes: `${cards[idx].userNotes ?? ''}${note}${body ? `\n${body as string}` : ''}`.trim(),
         editedAt:  new Date().toISOString(),
       }
       saveSkills(cards)
@@ -164,6 +170,7 @@ registerTool({
     id,
     title:      title as string,
     insight:    insight as string,
+    ...(typeof body === 'string' && body.trim() ? { body: body.trim() } : {}),
     tags:       (tags as string[]) ?? [],
     sourceDate: now,
     createdAt:  new Date().toISOString(),

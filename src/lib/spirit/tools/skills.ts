@@ -1,15 +1,16 @@
 /**
- * 技能洞察工具：搜索从历史对话中提炼的知识卡片
+ * 能力卡工具：搜索从历史对话中提炼的可复用做事方法
  */
 
 import { registerTool }      from '../registry'
 import { getSkills, saveSkills, replaceSkills, getSkillEmbeddings, saveSkillEmbeddings, type SkillCard } from '../memory'
 import { hybridSearch, type HybridDoc }  from '../hybrid-search'
 import { formatMemoryPack, type MemoryPackItem } from '../memory-pack'
+import { formatSkillForMemory } from '../skill-format'
 
 registerTool({
   name:        'search_skills',
-  description: '搜索从历史对话中提炼的知识洞察卡片。用于"之前学过的关于X的内容""上次解决Y问题的方法""有没有关于Z的历史经验"之类的场景。',
+  description: '搜索从历史对话中提炼的可复用能力卡。用于"之前怎么解决X""上次处理Y的方法""有没有关于Z的历史经验"之类的场景。',
   parameters: {
     type: 'object',
     properties: {
@@ -21,7 +22,7 @@ registerTool({
 }, async ({ query, topK = 5 }) => {
   const skills = getSkills()
   if (skills.length === 0) {
-    return { content: '暂无知识洞察记录。对话积累后会自动提炼。', brief: '暂无记录' }
+    return { content: '暂无能力卡记录。对话积累后会自动提炼。', brief: '暂无记录' }
   }
 
   const docs: HybridDoc[] = skills.map(s => ({
@@ -51,7 +52,7 @@ registerTool({
   })
 
   if (results.length === 0) {
-    return { content: `未找到与「${query}」相关的知识洞察`, brief: '无匹配' }
+    return { content: `未找到与「${query}」相关的能力卡`, brief: '无匹配' }
   }
 
   const skillMap = new Map<string, SkillCard>(skills.map(s => [s.id, s]))
@@ -62,7 +63,7 @@ registerTool({
       id: s.id,
       date: s.sourceDate,
       title: s.title,
-      summary: `${s.insight}${s.tags.length ? ` 标签：${s.tags.join('、')}` : ''}`,
+      summary: formatSkillForMemory(s, 900),
       source: s.sourceDate,
       score: r.rrfScore,
       confidence: 0.75,
@@ -78,9 +79,9 @@ registerTool({
 
   return {
     content: formatMemoryPack(matched, '技能卡检索结果'),
-    brief:   `找到 ${results.length} 条知识洞察`,
+    brief:   `找到 ${results.length} 张能力卡`,
   }
-}, { displayName: '检索知识洞察', domain: 'knowledge' })
+}, { displayName: '检索能力卡', domain: 'knowledge' })
 
 // ── list_skills ───────────────────────────────────────────────
 

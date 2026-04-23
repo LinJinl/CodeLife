@@ -4,7 +4,7 @@
  * 历史数据从 system prompt 中移除，改为 AI 按需主动拉取：
  *   get_daily_logs       — 最近 N 天修炼日志详情
  *   get_weekly_patterns  — 近期周规律叙事 + 隐患标记
- *   get_skill_cards      — 从历史对话提炼的技术洞察卡片
+ *   get_skill_cards      — 从历史对话提炼的可复用能力卡
  */
 
 import { registerTool }       from '../registry'
@@ -14,6 +14,7 @@ import {
   getSkills,
 }                             from '../memory'
 import { clampSummary, formatMemoryPack, type MemoryPackItem } from '../memory-pack'
+import { formatSkillForMemory } from '../skill-format'
 import fs from 'fs'
 import path from 'path'
 
@@ -105,7 +106,7 @@ registerTool({
 
 registerTool({
   name: 'get_skill_cards',
-  description: `获取从历史对话中提炼的技术洞察卡片。
+  description: `获取从历史对话中提炼的可复用能力卡。
 
 使用时机：
 - 用户问"我之前学了什么""有哪些洞察""之前总结过什么"
@@ -121,7 +122,7 @@ registerTool({
     id: s.id,
     date: s.sourceDate,
     title: s.title,
-    summary: `${s.insight}${s.tags.length ? ` 标签：${s.tags.join('、')}` : ''}`,
+    summary: formatSkillForMemory(s),
     source: s.sourceDate,
     confidence: 0.75,
   }))

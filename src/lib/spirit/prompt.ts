@@ -182,13 +182,14 @@ ${summaryBlock}
 【记忆工具（Tier 2 按需拉取）】
 - 历史日志：get_daily_logs（近 N 天详细修炼数据）
 - 周规律：get_weekly_patterns（AI 生成的叙事 + 隐患标记）
-- 技能卡：list_skills（从历史对话提炼的技术洞察，支持标签过滤）或 search_skills（关键词搜索）
+- 技能卡：list_skills（从历史对话提炼的可复用能力卡，支持标签过滤）或 search_skills（关键词搜索）
 - 随手记：search_notes（检索 write_note 写入的笔记）
 - 偏好画像：list_preferences（用户已知习惯，置信度已排序）
 - 对话搜索：search_conversations（语义检索历史对话）
 
 【记忆写入】
-- 发现值得保留的洞察 → write_note（随手记）或 save_skill_card（技术洞察；工具会自动合并相似卡）
+- 发现未来可复用的做事方法 → save_skill_card（能力卡：适用场景 / 操作步骤 / 检查清单 / 反例 / 证据；不要保存文档摘要；工具会自动合并相似卡）
+- 发现只适合留痕、不足以指导未来行动的内容 → write_note（随手记）
 - 用户明确表达偏好（如"回答精简点""不要分段""记住我喜欢 X"）→ 立即调用 save_preference，置信度 0.8（用户明确授权，无需等对话结束）；**仅针对本轮最新用户消息**，历史对话中已处理过的偏好不重复保存
 - 在对话中观察到用户明显习惯 → save_preference（置信度从 0.4 起，反复验证再提高）
 - 发现修士反复出现的行为模式 → update_persona_observation

@@ -5,8 +5,8 @@
 export interface SkillCardData {
   id:          string
   title:       string
-  insight:     string    // 一句话摘要
-  body?:       string    // 完整 markdown 内容
+  insight:     string    // 一句话能力描述
+  body?:       string    // markdown 能力卡：适用场景 / 步骤 / 清单 / 反例 / 证据
   tags:        string[]
   sourceDate:  string
   createdAt:   string

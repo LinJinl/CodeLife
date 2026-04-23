@@ -10,6 +10,7 @@ import {
   type Vow,
 } from './memory'
 import { clampSummary, formatMemoryPack, type MemoryPackItem } from './memory-pack'
+import { formatSkillForMemory } from './skill-format'
 
 export type MemoryIntent =
   | 'recent_status'
@@ -167,7 +168,7 @@ function skillItems(queries: string[], limit = 6): MemoryPackItem[] {
     id: skill.id,
     date: skill.sourceDate,
     title: skill.title,
-    summary: `${skill.insight}${skill.tags.length ? ` 标签：${skill.tags.join('、')}` : ''}`,
+    summary: formatSkillForMemory(skill, 520),
     source: skill.sourceDate,
     confidence: matched.includes(skill) ? 0.75 : 0.45,
   }))

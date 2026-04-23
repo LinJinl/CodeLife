@@ -75,7 +75,7 @@ export default function SpiritMemoryPage() {
             items={[
               'get_daily_logs — 最近 N 天修炼详情',
               'get_weekly_patterns — 周规律叙事 + 问题标记',
-              'get_skill_cards — 历史提炼的技术洞察卡',
+              'get_skill_cards — 历史提炼的可复用能力卡',
               'search_conversations — 语义检索历史对话',
               'search_blog_posts — 全文检索博客内容',
             ]}
@@ -141,12 +141,12 @@ interface VowSubGoal {
 }`} />
 
           <SubHead>技能卡 SkillCard</SubHead>
-          <p style={P}>由 LLM 从对话历史中每日提炼，每张卡是一个可复用的技术洞察。混合检索时作为知识索引命中。</p>
+          <p style={P}>由 LLM 从对话历史中提炼，每张卡是一套可复用的操作规程、排查流程或检查清单。混合检索命中后会把可执行用法注入上下文。</p>
           <CodeBlock code={`interface SkillCard {
   id:        string   // "skill_20260414_001"
   title:     string   // ≤20 字
-  insight:   string   // 一句话摘要
-  body?:     string   // 完整 markdown
+  insight:   string   // 一句话能力描述
+  body?:     string   // 场景 / 步骤 / 清单 / 反例 / 证据
   tags:      string[]
   useCount:  number   // 被引用次数
 }`} />
@@ -232,7 +232,7 @@ interface VowSubGoal {
           <PipelineItem
             trigger="每日触发（最多一次）"
             name="extractSkills()"
-            desc="扫描最近 N 天对话，批量提炼技术洞察卡片，写入 skills/index.json。提炼结果可通过 get_skill_cards 工具在后续对话中复用。"
+            desc="扫描最近 N 天对话，批量提炼可复用能力卡，写入候选记忆；晋升后可通过 get_skill_cards 工具在后续对话中复用。"
           />
           <PipelineItem
             trigger="每周一"

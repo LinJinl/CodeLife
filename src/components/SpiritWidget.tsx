@@ -813,7 +813,7 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                           <textarea
                             value={editDraft.insight}
                             onChange={e => setEditDraft(d => ({ ...d, insight: e.target.value }))}
-                            placeholder="一句话摘要（≤50字，用于列表预览）"
+                            placeholder="一句话能力描述：何时用、怎么做"
                             rows={2}
                             style={{
                               width: '100%', boxSizing: 'border-box',
@@ -853,7 +853,7 @@ export default function SpiritWidget({ name = '青霄' }: { name?: string }) {
                                 transition: 'transform 0.15s',
                                 fontSize: 8,
                               }}>▶</span>
-                              {expandedSkillId === card.id ? '收起全文' : '展开全文'}
+                              {expandedSkillId === card.id ? '收起用法' : '展开用法'}
                             </button>
                             {expandedSkillId === card.id && (
                               <div style={{
