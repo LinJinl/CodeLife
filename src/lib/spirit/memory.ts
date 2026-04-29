@@ -374,7 +374,7 @@ export function saveBlogPostsCache(posts: CachedBlogPost[]) {
 const blogEmbeddingsFile = path.join(BASE, 'blog_embeddings.json')
 
 export interface BlogEmbeddingEntry {
-  id:  string   // slug
+  id:  string   // blog:{slug}:{hash(slug,title,publishedAt)}
   vec: number[]
 }
 
@@ -384,6 +384,140 @@ export function getBlogEmbeddings(): BlogEmbeddingEntry[] {
 
 export function saveBlogEmbeddings(entries: BlogEmbeddingEntry[]) {
   writeJSON(blogEmbeddingsFile, entries)
+}
+
+// ── Diagnostics（本地助手状态面板）─────────────────────────────
+
+export interface DataSourceStatus {
+  source: 'blog' | 'leetcode' | 'github' | 'memory' | 'embedding'
+  ok: boolean
+  checkedAt: string
+  message: string
+}
+
+export interface SpiritDiagnostics {
+  updatedAt: string
+  sources: Record<string, DataSourceStatus>
+  lastSync?: {
+    date: string
+    totalPoints: number
+    activities: number
+    syncedAt: string
+  }
+  blogCache?: {
+    total: number
+    withContent: number
+    fetchedContent?: number
+    failedContent?: number
+    checkedAt: string
+  }
+}
+
+const diagnosticsFile = path.join(BASE, 'diagnostics.json')
+
+export function getSpiritDiagnostics(): SpiritDiagnostics {
+  return readJSON<SpiritDiagnostics>(diagnosticsFile, {
+    updatedAt: '',
+    sources: {},
+  })
+}
+
+export function updateDataSourceStatus(status: Omit<DataSourceStatus, 'checkedAt'>) {
+  const diagnostics = getSpiritDiagnostics()
+  const checkedAt = new Date().toISOString()
+  diagnostics.updatedAt = checkedAt
+  diagnostics.sources[status.source] = { ...status, checkedAt }
+  writeJSON(diagnosticsFile, diagnostics)
+}
+
+export function updateBlogCacheDiagnostics(info: Omit<NonNullable<SpiritDiagnostics['blogCache']>, 'checkedAt'>) {
+  const diagnostics = getSpiritDiagnostics()
+  const checkedAt = new Date().toISOString()
+  diagnostics.updatedAt = checkedAt
+  diagnostics.blogCache = { ...info, checkedAt }
+  writeJSON(diagnosticsFile, diagnostics)
+}
+
+export function recordDailySync(log: DailyLog) {
+  const diagnostics = getSpiritDiagnostics()
+  const syncedAt = new Date().toISOString()
+  diagnostics.updatedAt = syncedAt
+  diagnostics.lastSync = {
+    date: log.date,
+    totalPoints: log.totalPoints,
+    activities: log.activities.length,
+    syncedAt,
+  }
+  writeJSON(diagnosticsFile, diagnostics)
+}
+
+// ── Extractor Cursor（增量提炼游标）────────────────────────────
+
+export type ExtractorName = 'skills' | 'preferences'
+
+export interface ExtractorCursor {
+  lastProcessedDate: string
+  lastProcessedMessageCount: number
+  updatedAt: string
+}
+
+export type ExtractorCursors = Partial<Record<ExtractorName, ExtractorCursor>>
+
+const extractorCursorsFile = path.join(BASE, 'extractors.json')
+
+export function getExtractorCursors(): ExtractorCursors {
+  return readJSON<ExtractorCursors>(extractorCursorsFile, {})
+}
+
+export function getExtractorCursor(name: ExtractorName): ExtractorCursor | null {
+  return getExtractorCursors()[name] ?? null
+}
+
+export function saveExtractorCursor(name: ExtractorName, cursor: Omit<ExtractorCursor, 'updatedAt'>) {
+  const cursors = getExtractorCursors()
+  cursors[name] = {
+    ...cursor,
+    updatedAt: new Date().toISOString(),
+  }
+  writeJSON(extractorCursorsFile, cursors)
+}
+
+export function clearExtractorCursor(name?: ExtractorName) {
+  if (!name) {
+    writeJSON(extractorCursorsFile, {})
+    return
+  }
+  const cursors = getExtractorCursors()
+  delete cursors[name]
+  writeJSON(extractorCursorsFile, cursors)
+}
+
+export function filterConversationsAfterCursor(
+  conversations: Conversation[],
+  cursor: ExtractorCursor | null,
+): Conversation[] {
+  const sorted = [...conversations].sort((a, b) => a.date.localeCompare(b.date))
+  if (!cursor) return sorted
+
+  return sorted
+    .map(conv => {
+      if (conv.date < cursor.lastProcessedDate) return null
+      if (conv.date > cursor.lastProcessedDate) return conv
+      const messages = conv.messages.slice(cursor.lastProcessedMessageCount)
+      return messages.length > 0 ? { ...conv, messages } : null
+    })
+    .filter((conv): conv is Conversation => Boolean(conv))
+}
+
+export function saveExtractorCursorFromConversations(name: ExtractorName, conversations: Conversation[]) {
+  if (conversations.length === 0) return
+  const sorted = [...conversations].sort((a, b) => a.date.localeCompare(b.date))
+  const latest = sorted[sorted.length - 1]
+  const full = getConversation(latest.date)
+  saveExtractorCursor(name, {
+    lastProcessedDate: latest.date,
+    lastProcessedMessageCount: full.messages.length,
+  })
 }
 
 // ── Library Embedding Cache ───────────────────────────────────

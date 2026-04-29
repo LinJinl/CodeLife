@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: '/leetcode', label: '铸剑' },
   { href: '/github',   label: '声望' },
   { href: '/resources',label: '藏典' },
+  { href: '/spirit/knowledge', label: '知图' },
 ]
 
 export function Navigation({ siteTitle }: { siteTitle: string }) {

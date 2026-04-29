@@ -7,6 +7,7 @@ import { NextRequest }                                      from 'next/server'
 import { getConversation, saveConversation, saveSessionSummary, getAllConversationDates } from '@/lib/spirit/memory'
 import { summarizeSession }                                 from '@/lib/spirit/summarize'
 import { dateInTZ }                                          from '@/lib/spirit/time'
+import { saveExplicitPreferenceFromText }                    from '@/lib/spirit/explicit-preference'
 import config                                               from '../../../../../codelife.config'
 
 export const runtime = 'nodejs'
@@ -31,6 +32,9 @@ export async function POST(req: NextRequest) {
   const date = todayStr()
   const conv = { date, messages: body.messages as never }
   saveConversation(conv)
+
+  const lastUser = [...body.messages].reverse().find(m => m.role === 'user')?.content
+  if (lastUser) saveExplicitPreferenceFromText(lastUser)
 
   // 异步生成当日摘要（不阻塞响应）
   if (config.spirit?.enabled && config.spirit.apiKey) {

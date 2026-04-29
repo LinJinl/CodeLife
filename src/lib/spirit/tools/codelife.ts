@@ -4,7 +4,6 @@
 
 import { registerTool }        from '../registry'
 import config                  from '../../../../codelife.config'
-import { createBlogAdapter }   from '../../adapters/blog'
 import { createLeetcodeAdapter } from '../../adapters/leetcode'
 import {
   getConversation, getRecentConversations,
@@ -12,6 +11,7 @@ import {
   getBlogEmbeddings, saveBlogEmbeddings,
   getBlogPostsCache, type CachedBlogPost,
 } from '../memory'
+import { blogDocId, refreshBlogPostsCache } from '../blog-cache'
 import { hybridSearch, type HybridDoc } from '../hybrid-search'
 import { HybridSearchService, makeEmbedder } from '../hybrid-search-service'
 import { summarizeChunksForQuery }      from '../summarize'
@@ -20,9 +20,8 @@ import { createHash } from 'crypto'
 
 const blogSearch = new HybridSearchService(getBlogEmbeddings, saveBlogEmbeddings)
 
-function convDocId(date: string, role: string, content: string): string {
-  const hash = createHash('sha1').update(`${date}\n${role}\n${content}`).digest('hex').slice(0, 16)
-  return `${date}::${hash}`
+function convDocId(date: string, msgIndex: number): string {
+  return `conversation:${date}:${msgIndex}`
 }
 
 registerTool({
@@ -40,16 +39,7 @@ registerTool({
   let posts: CachedBlogPost[] = getBlogPostsCache()
   if (posts.length === 0) {
     try {
-      const adapter   = createBlogAdapter(config.blog, config.cultivation)
-      const livePosts = await adapter.getPosts()
-      posts = livePosts.map(p => ({
-        slug: p.slug, title: p.title, excerpt: p.excerpt ?? '', content: '',
-        category: p.category, tags: p.tags ?? [], wordCount: p.wordCount,
-        publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
-        pointsEarned: p.pointsEarned,
-      }))
-      const { saveBlogPostsCache: save } = await import('../memory')
-      save(posts)
+      posts = (await refreshBlogPostsCache({ includeContent: true })).posts
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return { content: `博客数据源读取失败：${msg}`, brief: '数据源错误' }
@@ -136,24 +126,10 @@ registerTool({
   // 优先读本地缓存（syncToday 写入），避免每次搜索都调远程 API
   let posts: CachedBlogPost[] = getBlogPostsCache()
 
-  if (posts.length === 0) {
-    // 缓存不存在时 fallback：实时拉一次并写缓存
+  if (posts.length === 0 || posts.some(p => !p.content.trim())) {
+    // 缓存不存在或部分文章只有 metadata 时 fallback：补齐缺失正文并写缓存
     try {
-      const adapter    = createBlogAdapter(config.blog, config.cultivation)
-      const livePosts  = await adapter.getPosts()
-      posts = livePosts.map(p => ({
-        slug:        p.slug,
-        title:       p.title,
-        excerpt:     p.excerpt ?? '',
-        content:     '',
-        category:    p.category,
-        tags:        p.tags ?? [],
-        wordCount:   p.wordCount,
-        publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
-        pointsEarned: p.pointsEarned,
-      }))
-      const { saveBlogPostsCache } = await import('../memory')
-      saveBlogPostsCache(posts)
+      posts = (await refreshBlogPostsCache({ includeContent: true })).posts
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return { content: `博客数据源读取失败（本地无缓存）：${msg}，请先执行一次数据同步（POST /api/spirit/sync）`, brief: '数据源错误' }
@@ -163,16 +139,18 @@ registerTool({
   if (category) posts = posts.filter(p => p.category === (category as string))
   if (posts.length === 0) return { content: '博客中没有文章，或分类下无内容', brief: '无结果' }
 
-  const docs: HybridDoc[] = posts.map(p => ({
-    id:   p.slug,
+  type BlogDoc = HybridDoc & { post: CachedBlogPost }
+  const docs: BlogDoc[] = posts.map(p => ({
+    id:   blogDocId(p),
     text: `${p.title}\n${p.content || p.excerpt}`,
+    post: p,
   }))
 
   const results = await blogSearch.search(docs, query as string, Math.min(Number(topK), 10))
 
   if (results.length === 0) return { content: '没有找到相关博文', brief: '无结果' }
 
-  const postMap = new Map(posts.map(p => [p.slug, p]))
+  const postMap = new Map(docs.map(d => [d.id, d.post]))
   const matched = results.map(r => {
     const p = postMap.get(r.id)!
     return {
@@ -246,7 +224,7 @@ registerTool({
     conv.messages.forEach((msg, idx) => {
       if (!msg.content.trim()) return
       docs.push({
-        id:   convDocId(conv.date, msg.role, msg.content),
+        id:   convDocId(conv.date, idx),
         text: msg.content,
         meta: { date: conv.date, msgIndex: idx, role: msg.role, content: msg.content, timestamp: msg.timestamp ?? '' },
       })
@@ -256,7 +234,7 @@ registerTool({
 
   // 读 embedding 缓存
   const cache    = getConvEmbeddings()
-  const cacheMap = new Map(cache.map(e => [e.id ?? convDocId(e.date, e.role, e.content), e.vec]))
+  const cacheMap = new Map(cache.map(e => [e.id ?? convDocId(e.date, e.msgIndex), e.vec]))
 
   const results = await hybridSearch(docs, query as string, {
     topK:        k,

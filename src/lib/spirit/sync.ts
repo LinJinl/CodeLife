@@ -10,31 +10,29 @@ import {
   saveDailyLog, getRecentDailyLogs, getActiveVows, saveVows, getVows,
   saveWeeklyPattern, getWeeklyPatterns, getPersona, savePersona,
   getCumulativePoints, calcVowStreak, getWeekStart,
+  updateDataSourceStatus, updateBlogCacheDiagnostics, recordDailySync,
 } from './memory'
 import { addDays, dateInTZ, weekStart } from './time'
 import type { DailyLog, DailyActivity, WeeklyPattern, PersonaProfile, VowSubGoal } from './memory'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
-import { createHash } from 'crypto'
 
 // 避免在 sync 里直接引入 data.ts（会带着 unstable_cache 的服务端约束）
 // 改为直接调用 adapter，sync 只在 API route 里执行
 import config                      from '../../../codelife.config'
-import { createBlogAdapter }       from '../adapters/blog'
 import { createLeetcodeAdapter }   from '../adapters/leetcode'
 import {
   getBlogEmbeddings, saveBlogEmbeddings,
   getConvEmbeddings, saveConvEmbeddings,
   getRecentConversations,
-  getBlogPostsCache, saveBlogPostsCache, type CachedBlogPost,
 } from './memory'
+import { blogDocId, refreshBlogPostsCache } from './blog-cache'
 
 function todayStr(): string {
   return dateInTZ()
 }
 
-function convDocId(date: string, role: string, content: string): string {
-  const hash = createHash('sha1').update(`${date}\n${role}\n${content}`).digest('hex').slice(0, 16)
-  return `${date}::${hash}`
+function convDocId(date: string, msgIndex: number): string {
+  return `conversation:${date}:${msgIndex}`
 }
 
 /** 计算连续天数（从今天往前数有日志的天数） */
@@ -57,28 +55,22 @@ export async function syncToday(): Promise<DailyLog> {
 
   // ── 博客 ──────────────────────────────────────────────────
   try {
-    const blog  = createBlogAdapter(config.blog, config.cultivation)
-    const posts = await blog.getPosts()
-
-    // 全量 metadata 缓存到本地，供器灵搜索时离线使用
-    const existingCache = getBlogPostsCache()
-    const existingMap = new Map(existingCache.map(p => [p.slug, p]))
-    const cached: CachedBlogPost[] = posts.map(p => ({
-      slug:        p.slug,
-      title:       p.title,
-      excerpt:     p.excerpt ?? '',
-      content:     existingMap.get(p.slug)?.content ?? '',
-      category:    p.category,
-      tags:        p.tags ?? [],
-      wordCount:   p.wordCount,
-      publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
-      pointsEarned: p.pointsEarned,
-    }))
-    saveBlogPostsCache(cached)
+    const cache = await refreshBlogPostsCache({ includeContent: true, concurrency: 3 })
+    const posts = cache.posts
+    updateBlogCacheDiagnostics({
+      total: cache.total,
+      withContent: cache.withContent,
+      fetchedContent: cache.fetchedContent,
+      failedContent: cache.failedContent,
+    })
+    updateDataSourceStatus({
+      source: 'blog',
+      ok: true,
+      message: `已同步 ${cache.total} 篇，${cache.withContent} 篇有正文缓存`,
+    })
 
     const todayPosts = posts.filter(p => {
-      const d = typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString()
-      return d.startsWith(date)
+      return p.publishedAt.startsWith(date)
     })
     if (todayPosts.length > 0) {
       const pts = todayPosts.reduce((s, p) => s + p.pointsEarned, 0)
@@ -90,13 +82,24 @@ export async function syncToday(): Promise<DailyLog> {
       })
       totalPoints += pts
     }
-  } catch { /* 数据源未配置时跳过 */ }
+  } catch (err) {
+    updateDataSourceStatus({
+      source: 'blog',
+      ok: false,
+      message: err instanceof Error ? err.message : String(err),
+    })
+  }
 
   // ── LeetCode ──────────────────────────────────────────────
   try {
     if (config.leetcode.enabled) {
       const lc       = createLeetcodeAdapter(config.leetcode, config.cultivation)
       const problems = await lc.getProblems()
+      updateDataSourceStatus({
+        source: 'leetcode',
+        ok: true,
+        message: `已读取 ${problems.length} 条刷题记录`,
+      })
       const todayProblems = problems.filter(p => {
         const d = typeof p.solvedAt === 'string' ? p.solvedAt : (p.solvedAt as Date).toISOString()
         return d.startsWith(date)
@@ -112,20 +115,37 @@ export async function syncToday(): Promise<DailyLog> {
         totalPoints += pts
       }
     }
-  } catch { /* 数据源未配置时跳过 */ }
+  } catch (err) {
+    updateDataSourceStatus({
+      source: 'leetcode',
+      ok: false,
+      message: err instanceof Error ? err.message : String(err),
+    })
+  }
 
   // ── GitHub ────────────────────────────────────────────────
   try {
     const { createGithubAdapter } = await import('../adapters/github')
     const gh    = createGithubAdapter(config.github, config.cultivation)
     const stats = await gh.getStats()
+    updateDataSourceStatus({
+      source: 'github',
+      ok: true,
+      message: `总 commit ${stats.totalCommits}，连续 ${stats.currentStreak} 天`,
+    })
     const todayContrib = stats.contributions.find((c: { date: string; count: number }) => c.date === date)
     if (todayContrib && todayContrib.count > 0) {
       const pts = todayContrib.count * (config.cultivation?.github?.commit ?? 15)
       activities.push({ type: 'github', count: todayContrib.count, points: pts })
       totalPoints += pts
     }
-  } catch { /* 未配置时跳过 */ }
+  } catch (err) {
+    updateDataSourceStatus({
+      source: 'github',
+      ok: false,
+      message: err instanceof Error ? err.message : String(err),
+    })
+  }
 
   const log: DailyLog = {
     date,
@@ -135,6 +155,7 @@ export async function syncToday(): Promise<DailyLog> {
   }
 
   saveDailyLog(log)
+  recordDailySync(log)
   checkVowsForToday(log)
   return log
 }
@@ -391,79 +412,56 @@ export async function preIndexEmbeddings(llm: SimpleLLM): Promise<{ blogNew: num
 
   // ── 博客预索引（含全文）──────────────────────────────────
   try {
-    const adapter    = createBlogAdapter(config.blog, config.cultivation)
-    const posts      = await adapter.getPosts()
-    const embCache   = getBlogEmbeddings()
-    const embMap     = new Map(embCache.map(e => [e.id, e.vec]))
-    const postCache  = getBlogPostsCache()
-    const postMap    = new Map(postCache.map(p => [p.slug, p]))
+    const cacheInfo = await refreshBlogPostsCache({ includeContent: true, concurrency: 3 })
+    updateBlogCacheDiagnostics({
+      total: cacheInfo.total,
+      withContent: cacheInfo.withContent,
+      fetchedContent: cacheInfo.fetchedContent,
+      failedContent: cacheInfo.failedContent,
+    })
 
-    // 找出还没有全文的文章
-    const needContent = posts.filter(p => !postMap.get(p.slug)?.content)
-
-    // 逐篇拉全文（并发 3 篇，避免 API 过载）
-    for (let i = 0; i < needContent.length; i += 3) {
-      const batch = needContent.slice(i, i + 3)
-      await Promise.all(batch.map(async p => {
-        try {
-          const detail  = await adapter.getPostContentById(p.id)
-          const content = detail.content
-            ? detail.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-            : p.excerpt ?? ''
-          postMap.set(p.slug, {
-            slug: p.slug, title: p.title, excerpt: p.excerpt ?? '',
-            content,
-            category: p.category, tags: p.tags ?? [],
-            wordCount: p.wordCount,
-            publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
-            pointsEarned: p.pointsEarned,
-          })
-        } catch {
-          // 单篇拉失败不中断整体
-        }
-      }))
-    }
-
-    // 补充还没进 postMap 的文章（元数据）
-    for (const p of posts) {
-      if (!postMap.has(p.slug)) {
-        postMap.set(p.slug, {
-          slug: p.slug, title: p.title, excerpt: p.excerpt ?? '', content: p.excerpt ?? '',
-          category: p.category, tags: p.tags ?? [], wordCount: p.wordCount,
-          publishedAt: typeof p.publishedAt === 'string' ? p.publishedAt : (p.publishedAt as Date).toISOString(),
-          pointsEarned: p.pointsEarned,
-        })
-      }
-    }
-    saveBlogPostsCache(Array.from(postMap.values()))
+    const posts    = cacheInfo.posts
+    const embCache = getBlogEmbeddings()
+    const embMap   = new Map(embCache.map(e => [e.id, e.vec]))
 
     // embedding：用 title + content（截断到 6000 字避免超 token）
-    const missingEmb = posts.filter(p => !embMap.has(p.slug))
+    const missingEmb = posts
+      .map(post => ({ post, id: blogDocId(post) }))
+      .filter(item => !embMap.has(item.id))
     if (missingEmb.length > 0) {
-      const texts = missingEmb.map(p => {
-        const cached = postMap.get(p.slug)
-        const body   = cached?.content ?? cached?.excerpt ?? ''
-        return `${p.title}\n${body}`.slice(0, 6000)
+      const texts = missingEmb.map(({ post }) => {
+        const body = post.content || post.excerpt || ''
+        return `${post.title}\n${body}`.slice(0, 6000)
       })
       const vecs = await embedder.embedDocuments(texts)
-      missingEmb.forEach((p, i) => embMap.set(p.slug, vecs[i]))
+      missingEmb.forEach((item, i) => embMap.set(item.id, vecs[i]))
       saveBlogEmbeddings(Array.from(embMap.entries()).map(([id, vec]) => ({ id, vec })))
       blogNew = missingEmb.length
     }
+    updateDataSourceStatus({
+      source: 'embedding',
+      ok: true,
+      message: `博客新增 ${blogNew} 条向量`,
+    })
   } catch (e) {
     console.warn('[preIndex] 博客索引失败:', e)
+    updateDataSourceStatus({
+      source: 'embedding',
+      ok: false,
+      message: e instanceof Error ? e.message : String(e),
+    })
   }
 
   // ── 对话预索引（近 7 天）────────────────────────────────
   try {
     const convs    = getRecentConversations(7)
     const cache    = getConvEmbeddings()
-    const cacheMap = new Map(cache.map(e => [e.id ?? convDocId(e.date, e.role, e.content), e.vec]))
+    const cacheMap = new Map(cache.map(e => [e.id ?? convDocId(e.date, e.msgIndex), e.vec]))
 
     const missing: { key: string; date: string; msgIndex: number; role: string; content: string; timestamp: string }[] = []
     for (const conv of convs) {
       conv.messages.forEach((msg, idx) => {
-        const key = convDocId(conv.date, msg.role, msg.content)
+        const key = convDocId(conv.date, idx)
         if (msg.content.trim() && !cacheMap.has(key)) {
           missing.push({ key, date: conv.date, msgIndex: idx, role: msg.role, content: msg.content, timestamp: msg.timestamp ?? '' })
         }
@@ -479,8 +477,18 @@ export async function preIndexEmbeddings(llm: SimpleLLM): Promise<{ blogNew: num
       saveConvEmbeddings(cache)
       convNew = missing.length
     }
+    updateDataSourceStatus({
+      source: 'memory',
+      ok: true,
+      message: `对话新增 ${convNew} 条向量`,
+    })
   } catch (e) {
     console.warn('[preIndex] 对话索引失败:', e)
+    updateDataSourceStatus({
+      source: 'memory',
+      ok: false,
+      message: e instanceof Error ? e.message : String(e),
+    })
   }
 
   return { blogNew, convNew }

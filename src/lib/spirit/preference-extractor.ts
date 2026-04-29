@@ -12,6 +12,9 @@ import type { ChatOpenAI }             from '@langchain/openai'
 import {
   getRecentConversations,
   getPreferences,
+  getExtractorCursor,
+  filterConversationsAfterCursor,
+  saveExtractorCursorFromConversations,
   type Preference, type PreferenceCategory,
 } from './memory'
 import { dateInTZ } from './time'
@@ -64,7 +67,8 @@ export async function extractPreferences(
   model: ChatOpenAI,
 ): Promise<PrefExtractResult> {
   const existing = getPreferences()
-  const convs    = getRecentConversations(days)
+  const allConvs = getRecentConversations(days)
+  const convs    = filterConversationsAfterCursor(allConvs, getExtractorCursor('preferences'))
 
   if (convs.length === 0) return { totalCount: existing.length, changedCount: 0 }
 
@@ -104,6 +108,7 @@ export async function extractPreferences(
     ])
 
     if (result.updates.length === 0 && !result.retire?.length) {
+      saveExtractorCursorFromConversations('preferences', convs)
       return { totalCount: existing.length, changedCount: 0 }
     }
 
@@ -170,6 +175,7 @@ export async function extractPreferences(
     }
 
     const changedCount = candidates.length > 0 ? addMemoryCandidates(candidates, today).length : 0
+    saveExtractorCursorFromConversations('preferences', convs)
     return { totalCount: existing.length, changedCount }
   } catch (err) {
     console.warn('[preference-extractor] failed:', err)

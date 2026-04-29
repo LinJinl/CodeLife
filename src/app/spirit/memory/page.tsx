@@ -1,4 +1,24 @@
+import {
+  getActiveVows,
+  getAllConversationDates,
+  getBlogPostsCache,
+  getExtractorCursors,
+  getPersona,
+  getPreferences,
+  getRecentDailyLogs,
+  getRecentSummaries,
+  getSkills,
+  getSpiritDiagnostics,
+  getWeeklyPatterns,
+} from '@/lib/spirit/memory'
+import { getAllCandidates } from '@/lib/spirit/candidate-memory'
+import { MemoryConsoleActions } from '@/components/spirit/MemoryConsoleActions'
+
+export const dynamic = 'force-dynamic'
+
 export default function SpiritMemoryPage() {
+  const overview = getMemoryOverview()
+
   return (
     <div className="page-content">
 
@@ -44,6 +64,14 @@ export default function SpiritMemoryPage() {
           <p style={P}>
             青霄的记忆不依赖单一的 System Prompt 堆砌历史，而是将信息分层存储、按需拉取。核心原则是：<em style={{ color: 'var(--ink)', fontStyle: 'normal' }}>常驻的保持精简，按需拉取，实时数据实时注入</em>。这样可以在保持上下文新鲜度的同时，大幅压缩每次请求的 token 成本。
           </p>
+        </Section>
+
+        <Section label="当前状态">
+          <MemoryStatusPanel overview={overview} />
+        </Section>
+
+        <Section label="记忆控制台">
+          <MemoryConsoleActions pendingCandidates={overview.pendingCandidates} />
         </Section>
 
         {/* ── 三层架构图 ────────────────────────────────────────── */}
@@ -174,13 +202,13 @@ interface VowSubGoal {
             <DomainCard name="vow"         color="var(--gold-dim)" desc="誓约管理与进度" always />
             <DomainCard name="knowledge"   color="var(--gold-dim)" desc="技能卡、偏好画像、笔记" always />
             <DomainCard name="meta"        color="var(--gold-dim)" desc="MCP 工具管理" always />
+            <DomainCard name="system"      color="var(--gold-dim)" desc="文件浏览、读取代码、Shell 命令" always />
             <DomainCard name="web"         color="var(--jade)" desc="联网搜索、抓取网页" />
             <DomainCard name="library"     color="var(--jade)" desc="藏经阁收藏与检索" />
-            <DomainCard name="system"      color="var(--seal)" desc="文件读写、Shell 命令" />
           </div>
 
           <p style={{ ...P, fontSize: 12, color: 'var(--ink-dim)' }}>
-            金色 = 默认加载；绿色 = 按意图推断追加；红色 = 需要用户授权的危险域
+            金色 = 默认加载；绿色 = 按意图推断追加。system 已改为常驻，保证本地项目分析时稳定可用；具体写入和中高危 shell 仍走确认令牌。
           </p>
         </Section>
 
@@ -282,6 +310,48 @@ interface VowSubGoal {
   )
 }
 
+function getMemoryOverview() {
+  const prefs = getPreferences()
+  const skills = getSkills()
+  const candidates = getAllCandidates()
+  const candidateCounts = {
+    pending: candidates.filter(c => c.status === 'pending').length,
+    promoted: candidates.filter(c => c.status === 'promoted').length,
+    merged: candidates.filter(c => c.status === 'merged').length,
+    ignored: candidates.filter(c => c.status === 'ignored').length,
+  }
+  const blogCache = getBlogPostsCache()
+  const diagnostics = getSpiritDiagnostics()
+  return {
+    persona: getPersona(),
+    activeVows: getActiveVows().length,
+    summaries: getRecentSummaries(30).length,
+    injectedPrefs: prefs.filter(p => p.confidence >= 0.35 && p.volatility !== 'volatile').length,
+    totalPrefs: prefs.length,
+    skills: skills.length,
+    candidateCounts,
+    dailyLogs: getRecentDailyLogs(90).length,
+    weeklyPatterns: getWeeklyPatterns(12).length,
+    conversations: getAllConversationDates().length,
+    blogCache: {
+      total: blogCache.length,
+      withContent: blogCache.filter(post => post.content.trim().length > 0).length,
+    },
+    diagnostics,
+    extractors: getExtractorCursors(),
+    pendingCandidates: candidates
+      .filter(c => c.status === 'pending')
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 12)
+      .map(c => ({
+        id: c.id,
+        proposedType: c.proposedType,
+        reason: c.reason,
+        confidence: c.confidence,
+      })),
+  }
+}
+
 // ── 共用样式 ───────────────────────────────────────────────────
 
 const P: React.CSSProperties = {
@@ -302,6 +372,20 @@ const CODE: React.CSSProperties = {
   borderRadius: 2,
 }
 
+const PANEL: React.CSSProperties = {
+  border:     '1px solid var(--ink-trace)',
+  background: 'var(--deep)',
+  padding:    '16px 18px',
+}
+
+const PANEL_TITLE: React.CSSProperties = {
+  fontFamily:    'var(--font-mono)',
+  fontSize:      10,
+  color:         'var(--gold-dim)',
+  letterSpacing: 2,
+  marginBottom:  10,
+}
+
 // ── 组件 ───────────────────────────────────────────────────────
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
@@ -314,6 +398,140 @@ function Section({ label, children }: { label: string; children: React.ReactNode
       </div>
       {children}
     </section>
+  )
+}
+
+function MemoryStatusPanel({ overview }: { overview: ReturnType<typeof getMemoryOverview> }) {
+  const sources = Object.values(overview.diagnostics.sources)
+    .sort((a, b) => a.source.localeCompare(b.source))
+  const lastSync = overview.diagnostics.lastSync
+  const blogTotal = overview.blogCache.total || overview.diagnostics.blogCache?.total || 0
+  const blogWithContent = overview.blogCache.withContent || overview.diagnostics.blogCache?.withContent || 0
+
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 18 }}>
+        <StatusCard
+          label="常驻注入"
+          value={`${overview.injectedPrefs} 偏好`}
+          detail={`${overview.activeVows} 活跃誓约 · ${overview.summaries} 近期摘要`}
+          color="var(--gold-dim)"
+        />
+        <StatusCard
+          label="已确认记忆"
+          value={`${overview.skills} 技能卡`}
+          detail={`${overview.totalPrefs} 偏好画像 · 人格：${overview.persona.currentPhase}`}
+          color="var(--jade)"
+        />
+        <StatusCard
+          label="候选区"
+          value={`${overview.candidateCounts.pending} 待审`}
+          detail={`${overview.candidateCounts.promoted} 已晋升 · ${overview.candidateCounts.merged} 已合并 · ${overview.candidateCounts.ignored} 已忽略`}
+          color="var(--seal)"
+        />
+        <StatusCard
+          label="归档轨迹"
+          value={`${overview.conversations} 天对话`}
+          detail={`${overview.dailyLogs} 日日志 · ${overview.weeklyPatterns} 周规律`}
+          color="var(--ink-dim)"
+        />
+      </div>
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: 14,
+      }}>
+        <div style={PANEL}>
+          <div style={PANEL_TITLE}>博客正文缓存</div>
+          <div style={{ ...P, margin: 0 }}>
+            已缓存 <strong style={{ color: 'var(--ink)', fontWeight: 400 }}>{blogTotal}</strong> 篇，
+            其中 <strong style={{ color: 'var(--gold-dim)', fontWeight: 400 }}>{blogWithContent}</strong> 篇带正文。
+            {blogTotal > 0 && blogWithContent < blogTotal ? ' 下一次同步会继续补齐正文。' : ''}
+          </div>
+        </div>
+
+        <div style={PANEL}>
+          <div style={PANEL_TITLE}>最近同步</div>
+          <div style={{ ...P, margin: 0 }}>
+            {lastSync
+              ? `${lastSync.date} 同步完成：${lastSync.activities} 类活动，+${lastSync.totalPoints} 修为`
+              : '尚未记录同步结果'}
+          </div>
+        </div>
+
+        <div style={PANEL}>
+          <div style={PANEL_TITLE}>提炼游标</div>
+          <div style={{ ...P, margin: 0 }}>
+            技能：{formatExtractorCursor(overview.extractors.skills)}<br />
+            偏好：{formatExtractorCursor(overview.extractors.preferences)}
+          </div>
+        </div>
+      </div>
+
+      {sources.length > 0 && (
+        <div style={{ ...PANEL, marginTop: 14 }}>
+          <div style={PANEL_TITLE}>数据源状态</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+            {sources.map(source => (
+              <div key={source.source} style={{
+                border: '1px solid var(--ink-trace)',
+                padding: '10px 12px',
+                background: 'var(--void)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                  <span style={{
+                    width: 7, height: 7, borderRadius: '50%',
+                    background: source.ok ? 'var(--jade)' : 'var(--seal)',
+                  }} />
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink)', letterSpacing: 1 }}>
+                    {source.source}
+                  </span>
+                  <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--ink-trace)' }}>
+                    {source.checkedAt.slice(5, 16).replace('T', ' ')}
+                  </span>
+                </div>
+                <div style={{ fontFamily: 'var(--font-serif)', fontSize: 12, color: 'var(--ink-dim)', lineHeight: 1.7 }}>
+                  {source.message}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatExtractorCursor(cursor: ReturnType<typeof getExtractorCursors>[keyof ReturnType<typeof getExtractorCursors>]): string {
+  if (!cursor) return '尚未处理'
+  return `${cursor.lastProcessedDate} 第 ${cursor.lastProcessedMessageCount} 条`
+}
+
+function StatusCard({ label, value, detail, color }: {
+  label: string
+  value: string
+  detail: string
+  color: string
+}) {
+  return (
+    <div style={{
+      border: `1px solid ${color}`,
+      borderTop: `3px solid ${color}`,
+      background: 'var(--deep)',
+      padding: '14px 14px 13px',
+      minHeight: 102,
+    }}>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color, letterSpacing: 2, marginBottom: 10 }}>
+        {label}
+      </div>
+      <div style={{ fontFamily: 'var(--font-xiaowei), serif', fontSize: 20, color: 'var(--ink)', letterSpacing: 2, marginBottom: 8 }}>
+        {value}
+      </div>
+      <div style={{ fontFamily: 'var(--font-serif)', fontSize: 11, color: 'var(--ink-dim)', lineHeight: 1.65 }}>
+        {detail}
+      </div>
+    </div>
   )
 }
 

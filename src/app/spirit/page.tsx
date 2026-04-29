@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { MessageItem }  from '@/components/spirit/MessageItem'
+import { ContextAuditDrawer } from '@/components/spirit/ContextAuditDrawer'
 import { useSpiritChat } from '@/components/spirit/useSpiritChat'
 import type { Message } from '@/components/spirit/types'
 import { addDays, dateInTZ } from '@/lib/spirit/time'
@@ -69,6 +70,7 @@ export default function SpiritPage() {
   const [selectedDate,   setSelectedDate]   = useState(todayStr())
   const [readonlyMsgs,   setReadonlyMsgs]   = useState<Message[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [auditOpen,      setAuditOpen]      = useState(false)
 
   const chat    = useSpiritChat(true)
   const isToday = selectedDate === todayStr()
@@ -178,6 +180,35 @@ export default function SpiritPage() {
           background: 'linear-gradient(90deg, var(--gold-line), transparent)',
           flexShrink: 0,
         }} />
+
+        <div style={{ padding: '12px 14px 8px' }}>
+          <button
+            onClick={() => setAuditOpen(true)}
+            title="查看本轮携带的上下文"
+            style={{
+              width: '100%',
+              border: '1px solid var(--ink-trace)',
+              background: 'transparent',
+              color: 'var(--ink-dim)',
+              cursor: 'pointer',
+              fontFamily: 'var(--font-serif)',
+              fontSize: 12,
+              letterSpacing: 2,
+              padding: '8px 10px',
+              textAlign: 'center',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'var(--gold-dim)'
+              e.currentTarget.style.color = 'var(--gold-dim)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--ink-trace)'
+              e.currentTarget.style.color = 'var(--ink-dim)'
+            }}
+          >
+            上下文
+          </button>
+        </div>
 
         {/* 日期列表 */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
@@ -386,6 +417,12 @@ export default function SpiritPage() {
           </div>
         )}
       </div>
+
+      <ContextAuditDrawer
+        open={auditOpen}
+        onClose={() => setAuditOpen(false)}
+        refreshKey={`${chat.messages.length}:${chat.loading ? 'loading' : 'idle'}`}
+      />
     </div>,
     document.body
   )

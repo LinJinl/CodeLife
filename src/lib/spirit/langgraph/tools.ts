@@ -27,10 +27,10 @@ export type { ToolDomain }        from '../registry'
 
 /**
  * 青霄默认加载的域（始终注入）
- * web / library / system 按消息意图按需追加
+ * system 常驻，便于本地项目助手稳定读文件和跑命令；web / library 按需追加。
  */
 const QINGXIAO_DEFAULT_DOMAINS: ToolDomain[] = [
-  'cultivation', 'memory', 'vow', 'knowledge', 'meta',
+  'cultivation', 'memory', 'vow', 'knowledge', 'meta', 'system',
 ]
 
 // ── AI 域分类器 ────────────────────────────────────────────────

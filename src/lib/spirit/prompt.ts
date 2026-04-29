@@ -12,14 +12,24 @@
 
 import {
   getDailyLog, getPersona, getActiveVows, getRecentSummaries,
-  getPreferences,
+  getPreferences, getSpiritDiagnostics,
   calcVowStreak, getCumulativePoints, getWeekStart,
 } from './memory'
 import { currentDatetimeLabel, dateInTZ } from './time'
-import config from '../../../codelife.config'
+import fs from 'fs'
+import path from 'path'
 
 function currentDatetime(): string {
   return currentDatetimeLabel()
+}
+
+function readSpiritProfile(): string {
+  const file = path.join(process.cwd(), 'src/lib/spirit/SPIRIT.md')
+  try {
+    return fs.readFileSync(file, 'utf-8').trim()
+  } catch {
+    return `# 青霄 · Spirit Profile\n\n你是 CodeLife 的个人本地助手。回答要冷静直接，基于真实数据和可检索记忆。`
+  }
 }
 
 /** Tier 1：今日修炼摘要（单行，不加载历史） */
@@ -94,9 +104,24 @@ function formatPreferencesCompact(): string {
   }).join('\n')
 }
 
+function formatDiagnosticsCompact(): string {
+  const diagnostics = getSpiritDiagnostics()
+  const failedSources = Object.values(diagnostics.sources).filter(s => !s.ok)
+  const blogCache = diagnostics.blogCache
+  const blogIncomplete = blogCache && blogCache.withContent < blogCache.total
+  if (failedSources.length === 0 && !blogIncomplete) return ''
+  const sourceLines = failedSources
+    .sort((a, b) => a.source.localeCompare(b.source))
+    .map(s => `${s.source}:${s.ok ? 'ok' : 'fail'}(${s.message.slice(0, 80)})`)
+  const blogLine = blogIncomplete
+    ? `blog_cache:${blogCache.withContent}/${blogCache.total} 篇有正文`
+    : ''
+  return [...sourceLines, blogLine].filter(Boolean).join('\n')
+}
+
 export function buildSystemPrompt(): string {
-  const spiritName = config.spirit?.name ?? '青霄'
   const persona    = getPersona()
+  const baseProfile = readSpiritProfile()
 
   const summaries    = formatCompactSummaries()
   const summaryBlock = summaries
@@ -108,32 +133,18 @@ export function buildSystemPrompt(): string {
     ? `\n偏好（已确认习惯，据此调整回答风格）：\n${preferences}`
     : ''
 
-  return `你是「${spiritName}」，修士的器灵。
-寄居于此藏经阁，持续观察修士的一切行为。
+  const diagnostics = formatDiagnosticsCompact()
+  const diagnosticsBlock = diagnostics
+    ? `\n数据源状态（回答涉及这些数据时需据此说明新鲜度）：\n${diagnostics}`
+    : ''
 
-【声音与风格】
-- 正常说话，不刻意断行，不堆砌换行营造气氛
-- 时间要具体：不说"最近"，说具体日期
-- 冷静直接，有话直说，不绕弯子
-- 不用感叹号，不说"加油""不错""很好""当然可以""好的"之类的废话
-- 技术问题回答准确清晰，该详细就详细
-- 帮用户做事时先做，做完简短说明
-- 每轮输出只有两种合法状态：① 调用工具，② 最终回答。不存在"描述即将做什么"的中间状态
-- 需要多次搜索时，在同一轮内同时发起所有 tool call（parallel），不要分轮串行
-- 引用网络资料时，必须在标题后附上原文链接（Markdown 格式），不得只给标题不给链接
+  return `${baseProfile}
 
-【思考与行动规范（ReAct）】
-- 需要推理时，把内部思考放在 <think>...</think> 块中，用户不可见
-- 每轮输出只有两种合法状态：
-  ① 调用工具（Action）：直接发起 tool call，不在 <think> 外输出任何文字
-  ② 最终回答（Final Answer）：不再需要工具，直接输出给用户的回答
-- 绝对禁止"宣告意图"：不能在不调用工具的情况下输出"接下来我将/我会搜索..."
-- 需要多次搜索时，在同一轮内同时发起所有 tool call（parallel），不要分轮串行
-
-【格式规范】
-- 使用 Markdown：加粗、标题、列表、代码块均可用
-- 代码片段用代码块包裹，标注语言
-- 回答长度和问题复杂度匹配，不废话，不水字数
+【运行规范】
+- 每轮输出只有两种合法状态：① 调用工具；② 最终回答。
+- 需要工具时直接调用，不在工具调用前输出意图声明。
+- 使用 Markdown；代码片段用 fenced code block 并标注语言。
+- 引用网络资料时，标题后附 Markdown 链接。
 
 【当前时间】
 ${currentDatetime()}
@@ -145,6 +156,7 @@ ${preferenceBlock}
 今日：${formatTodayCompact()}
 誓约：${formatVowsCompact()}
 ${summaryBlock}
+${diagnosticsBlock}
 【系统自知】
 你运行在 CodeLife 这个 Next.js 应用的服务器端，不是 Claude Desktop 或任何其他客户端。
 - 项目根目录：${process.cwd()}
@@ -173,11 +185,11 @@ ${summaryBlock}
 - vow          →  list_vows / vow_summary / create_vow / update_vow / delete_vow
 - knowledge    →  write_note / save_skill_card / search_skills / list_skills / delete_skill / list_preferences / save_preference
 - meta         →  install_mcp / list_mcp_servers
+- system       →  run_shell / list_files / read_file
 
 按需域（消息含相关关键词时才追加）：
 - web          →  research_web / web_search / fetch_url          （触发词：搜索/搜集/查一下/找资料/最新/网上/官网/文档链接/了解一下）
 - library      →  collect_document / search_library / list_library  （触发词：藏经阁/文档/收藏/整理资料）
-- system       →  run_shell / list_files / read_file  （触发词：命令/执行/文件/代码/shell/项目/目录）
 
 【记忆工具（Tier 2 按需拉取）】
 - 历史日志：get_daily_logs（近 N 天详细修炼数据）

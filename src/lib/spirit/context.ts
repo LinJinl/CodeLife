@@ -82,16 +82,16 @@ function buildEarlierSummary(messages: ConversationMessage[], maxChars: number):
   return `${header}\n${lines.join('\n')}`
 }
 
-function containsCurrentConversation(
+function isAlreadyInCurrentConversation(
   currentMessages: { role: string; content: string }[],
-  saved: ConversationMessage[],
+  saved: ConversationMessage,
 ): boolean {
-  const lastSavedSnippet = normalizeContent(saved.at(-1)?.content ?? '').slice(0, 50)
-  if (!lastSavedSnippet) return false
+  const snippet = normalizeContent(saved.content).slice(0, 50)
+  if (!snippet) return false
 
   return currentMessages
     .filter(m => m.role === 'user' || m.role === 'assistant')
-    .some(m => normalizeContent(m.content).includes(lastSavedSnippet))
+    .some(m => normalizeContent(m.content).includes(snippet))
 }
 
 export function packTodayHistory(
@@ -117,16 +117,19 @@ export function packTodayHistory(
 
   if (usable.length === 0) return { messages: [], diagnostics }
 
-  if (containsCurrentConversation(currentMessages, usable)) {
-    diagnostics.deduped = true
-    return { messages: [], diagnostics }
-  }
+  const savedOnly = usable.filter(message => {
+    const deduped = isAlreadyInCurrentConversation(currentMessages, message)
+    if (deduped) diagnostics.deduped = true
+    return !deduped
+  })
+
+  if (savedOnly.length === 0) return { messages: [], diagnostics }
 
   const recent: { index: number; message: ConversationMessage }[] = []
   let chars = 0
 
-  for (let i = usable.length - 1; i >= 0 && recent.length < budget.maxRecentMessages; i--) {
-    const original = usable[i]
+  for (let i = savedOnly.length - 1; i >= 0 && recent.length < budget.maxRecentMessages; i--) {
+    const original = savedOnly[i]
     const packed = truncateContent(original.content, budget.maxSingleMessageChars)
     const message: ConversationMessage = {
       ...original,
@@ -146,7 +149,7 @@ export function packTodayHistory(
 
   recent.reverse()
   const earliestRecentIndex = recent[0]?.index ?? -1
-  const earlier = earliestRecentIndex > 0 ? usable.slice(0, earliestRecentIndex) : []
+  const earlier = earliestRecentIndex > 0 ? savedOnly.slice(0, earliestRecentIndex) : []
   const summary = buildEarlierSummary(earlier, budget.todaySummaryChars)
 
   diagnostics.summarized = summary ? earlier.length : 0

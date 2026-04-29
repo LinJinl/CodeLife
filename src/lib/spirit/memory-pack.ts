@@ -3,6 +3,7 @@ export type MemoryPackType =
   | 'weekly_pattern'
   | 'skill'
   | 'conversation'
+  | 'session_summary'
   | 'note'
   | 'vow'
   | 'library'

@@ -12,11 +12,14 @@ import {
   getRecentConversations,
   getSkills,
   getSkillEmbeddings, saveSkillEmbeddings,
+  getExtractorCursor,
+  filterConversationsAfterCursor,
+  saveExtractorCursorFromConversations,
   type SkillCard,
 } from './memory'
 import { cosine } from './hybrid-search'
-import { dateInTZ, weekStart } from './time'
-import { addMemoryCandidates, getAllCandidates } from './candidate-memory'
+import { dateInTZ } from './time'
+import { addMemoryCandidates } from './candidate-memory'
 
 // ── LLM Schema ────────────────────────────────────────────────
 
@@ -85,7 +88,8 @@ export async function extractSkills(
   model: ChatOpenAI,
 ): Promise<ExtractResult> {
   const existing = getSkills()
-  const convs    = getRecentConversations(days)
+  const allConvs = getRecentConversations(days)
+  const convs    = filterConversationsAfterCursor(allConvs, getExtractorCursor('skills'))
 
   if (convs.length === 0) return { cards: existing, newCount: 0 }
 
@@ -155,6 +159,7 @@ export async function extractSkills(
         confidence: 0.75,
       })), today)
     }
+    saveExtractorCursorFromConversations('skills', convs)
     return { cards: existing, newCount: deduped.length }
   } catch (err) {
     console.warn('[skill-extractor] extractSkills failed:', err)
@@ -222,16 +227,8 @@ async function deduplicateSkills(
  * 逻辑：检查 skills/index.json 中是否有本周内 createdAt 的卡片。
  */
 export function shouldExtractSkills(): boolean {
-  const skills = getSkills()
-  const weekStartDate = new Date(`${weekStart()}T00:00:00+08:00`)
-  const recentSkillCandidate = getAllCandidates().some(candidate =>
-    candidate.proposedType === 'skill' &&
-    new Date(candidate.createdAt) >= weekStartDate
-  )
-
-  if (skills.length === 0) return !recentSkillCandidate
-
-  const latest = skills[skills.length - 1]
-  const latestDate = new Date(latest.createdAt)
-  return latestDate < weekStartDate && !recentSkillCandidate
+  return filterConversationsAfterCursor(
+    getRecentConversations(14),
+    getExtractorCursor('skills'),
+  ).some(conv => conv.messages.some(msg => msg.content.trim().length > 0))
 }

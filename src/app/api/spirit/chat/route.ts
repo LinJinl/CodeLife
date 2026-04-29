@@ -19,7 +19,7 @@ import { getCompiledGraph, getRecursionLimit } from '@/lib/spirit/langgraph/grap
 import { getDailyLog }                         from '@/lib/spirit/memory'
 import { dateInTZ }                            from '@/lib/spirit/time'
 import { packTodayHistory }                    from '@/lib/spirit/context'
-import { prefetchMemoryPack, type PrefetchedMemoryPack } from '@/lib/spirit/memory-gate'
+import { prefetchMemoryPackWithAI, type PrefetchedMemoryPack } from '@/lib/spirit/memory-gate'
 import { ensureConfiguredMCPServersLoaded }    from '@/lib/spirit/mcp-runtime'
 import { syncToday }           from '@/lib/spirit/sync'
 import { quickClassify }       from '@/lib/spirit/langgraph/classify'
@@ -29,6 +29,12 @@ import { buildChatModel }      from '@/lib/spirit/langgraph/agents'
 // 这里保守地用最大值（5 个并行任务）
 const DEFAULT_PARALLEL = 5
 import { translateToSpiritEvents }             from '@/lib/spirit/langgraph/stream'
+import {
+  attachMemoryGate,
+  consumeAuditEvent,
+  createContextRun,
+  saveContextRun,
+} from '@/lib/spirit/context-audit'
 
 export const runtime = 'nodejs'
 
@@ -45,7 +51,7 @@ function memoryGateHint(prefetch: PrefetchedMemoryPack): SystemMessage | null {
 
 function loadTodayHistory(
   currentMessages: { role: string; content: string }[],
-): BaseMessage[] {
+): { messages: BaseMessage[]; diagnostics: ReturnType<typeof packTodayHistory>['diagnostics'] } {
   const packed = packTodayHistory(currentMessages)
   const d = packed.diagnostics
   if (d.totalSaved > 0) {
@@ -57,7 +63,10 @@ function loadTodayHistory(
   const history = packed.messages.map(m =>
     m.role === 'user' ? new HumanMessage(m.content) : new AIMessage(m.content)
   )
-  return packed.summary ? [new SystemMessage(packed.summary), ...history] : history
+  return {
+    messages: packed.summary ? [new SystemMessage(packed.summary), ...history] : history,
+    diagnostics: packed.diagnostics,
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -81,7 +90,8 @@ export async function POST(req: NextRequest) {
   })
 
   // 今日已保存的历史作为真实消息 prepend（Issue 3）
-  const todayHistory      = loadTodayHistory(messages)
+  const todayHistoryPack  = loadTodayHistory(messages)
+  const todayHistory      = todayHistoryPack.messages
   const langchainMessages = [...todayHistory, ...currentMsgs]
 
   const lastUserMsg  = langchainMessages.findLast(m => m._getType() === 'human')
@@ -104,6 +114,23 @@ export async function POST(req: NextRequest) {
   const useAIDomains = !agentId || agentId === 'auto'
 
   const encoder = new TextEncoder()
+  const routeHint = messages.find(m => m.role === 'system' && m.content.startsWith('[当前页面：'))?.content
+    ?.replace('[当前页面：', '')
+    .replace(/\]$/, '')
+  const auditRun = createContextRun({
+    userMessage: lastUserText,
+    route: routeHint,
+    model: spirit.model,
+    todayHistory: {
+      totalSaved: todayHistoryPack.diagnostics.totalSaved,
+      selected: todayHistoryPack.diagnostics.selected,
+      summarized: todayHistoryPack.diagnostics.summarized,
+      skipped: todayHistoryPack.diagnostics.skipped,
+      truncated: todayHistoryPack.diagnostics.truncated,
+      deduped: todayHistoryPack.diagnostics.deduped,
+    },
+  })
+  const auditFinalText = { value: '' }
 
   const readable = new ReadableStream({
     async start(ctrl) {
@@ -123,7 +150,8 @@ export async function POST(req: NextRequest) {
 
         push(encodeEvent({ type: 'tool_done', name: '__init__' }))
 
-        const prefetchedMemory = prefetchMemoryPack(inferText)
+        const prefetchedMemory = await prefetchMemoryPackWithAI(inferText, model)
+        attachMemoryGate(auditRun, prefetchedMemory)
         const gateHint = memoryGateHint(prefetchedMemory)
         const prefetchedMemoryMessage = prefetchedMemory.content
           ? new SystemMessage(prefetchedMemory.content)
@@ -145,7 +173,9 @@ export async function POST(req: NextRequest) {
           : false
 
         const domains = useAIDomains ? getQingxiaoDomains(extraDomains as ToolDomain[]) : undefined
+        auditRun.domains = domains ?? ['debug']
         console.log(`[spirit] chat request: usePlanner=${usePlanner} msgs=${langchainMessages.length} domains=${domains?.join(',') ?? 'debug'} "${msgPreview}"`)
+        auditRun.planner.usePlanner = usePlanner
 
         const graph          = getCompiledGraph(agentId, domains)
         const recursionLimit = getRecursionLimit(DEFAULT_PARALLEL)
@@ -156,15 +186,20 @@ export async function POST(req: NextRequest) {
         )
 
         for await (const spiritEvent of translateToSpiritEvents(eventStream)) {
+          consumeAuditEvent(auditRun, spiritEvent, auditFinalText)
           push(encodeEvent(spiritEvent))
           if (spiritEvent.type === 'done') break
         }
+        auditRun.finalAnswerPreview = auditFinalText.value
         console.log('[spirit] chat done')
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err)
         console.error('[spirit] chat error:', errMsg)
+        auditRun.errors.push(errMsg)
         push(encodeEvent({ type: 'error', message: errMsg }))
       } finally {
+        auditRun.finalAnswerPreview = auditFinalText.value || auditRun.finalAnswerPreview
+        saveContextRun(auditRun)
         ctrl.close()
       }
     },

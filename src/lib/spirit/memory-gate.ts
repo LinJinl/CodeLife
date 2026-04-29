@@ -1,9 +1,13 @@
 import fs from 'fs'
 import path from 'path'
+import { HumanMessage, SystemMessage } from '@langchain/core/messages'
+import type { ChatOpenAI } from '@langchain/openai'
+import { z } from 'zod'
 import {
   getActiveVows,
   getRecentConversations,
   getRecentDailyLogs,
+  getRecentSummaries,
   getSkills,
   getWeeklyPatterns,
   type ConversationMessage,
@@ -36,6 +40,35 @@ export interface PrefetchedMemoryPack {
 
 const NOTES_DIR = path.resolve(process.cwd(), 'content/spirit/notes')
 
+const MEMORY_INTENT_SCHEMA = z.object({
+  intents: z.array(z.enum([
+    'recent_status',
+    'weekly_pattern',
+    'vow_progress',
+    'skill_lookup',
+    'conversation_lookup',
+    'note_lookup',
+    'none',
+  ])).describe('用户问题需要的记忆类型；如果完全不需要历史记忆，只返回 none'),
+})
+
+const MEMORY_INTENT_SYSTEM = `你是个人助手的记忆路由器。判断用户问题需要哪些历史记忆。
+
+可选记忆类型：
+- recent_status：用户问最近在做什么、近况、最近忙什么、近期活动/产出/状态
+- weekly_pattern：用户问规律、趋势、状态怎么样、复盘、隐患、周期性问题
+- vow_progress：用户问目标、誓约、计划、进度、截止时间、打卡情况
+- skill_lookup：用户问之前总结过的经验、方法论、技能卡、学过什么、洞察
+- conversation_lookup：用户问之前聊过什么、上次说过什么、某次对话内容
+- note_lookup：用户问随手记、笔记、记录过什么
+- none：不需要历史记忆即可回答
+
+规则：
+- 可以多选，但只选真正需要的。
+- "我最近在干什么 / 最近忙什么 / 这段时间做了什么" 属于 recent_status，通常也需要 weekly_pattern。
+- 不要因为问题里有"你觉得"就选 none；只要判断依赖用户历史，就选对应记忆类型。
+- 只输出 JSON，不输出解释。`
+
 function unique<T>(items: T[]): T[] {
   return Array.from(new Set(items))
 }
@@ -60,12 +93,13 @@ function extractDate(text: string): string | undefined {
 export function inferMemoryIntent(text: string): MemoryIntentResult {
   const intents: MemoryIntent[] = []
   const requiredTools: string[] = []
+  const asksRecentActivity = /(近况|最近状态|这几天|这段时间|最近.*(做|干|忙|搞|状态)|最近.*(干什么|干嘛|忙什么|做什么|做了什么|搞什么)|在干什么|在干嘛|忙什么|做了什么|干了什么)/.test(text)
 
-  if (/近况|最近状态|这几天|今天.*(做|状态)|晨省|修炼情况|最近.*做/.test(text)) {
+  if (asksRecentActivity || /今天.*(做|干|忙|状态)|晨省|修炼情况/.test(text)) {
     intents.push('recent_status')
-    requiredTools.push('get_daily_logs')
+    requiredTools.push('get_daily_logs', 'get_weekly_patterns', 'search_conversations')
   }
-  if (/上周|这个月|规律|趋势|状态怎么样|周期|隐患|复盘/.test(text)) {
+  if (asksRecentActivity || /上周|这个月|规律|趋势|状态怎么样|周期|隐患|复盘/.test(text)) {
     intents.push('weekly_pattern')
     requiredTools.push('get_weekly_patterns')
   }
@@ -95,6 +129,40 @@ export function inferMemoryIntent(text: string): MemoryIntentResult {
   }
 }
 
+export async function inferMemoryIntentWithAI(
+  text: string,
+  model: ChatOpenAI,
+): Promise<MemoryIntentResult> {
+  const rule = inferMemoryIntent(text)
+  if (rule.strength !== 'none') return rule
+
+  try {
+    const classifierModel = (model as unknown as { bind(args: Record<string, unknown>): unknown })
+      .bind({ stream: false }) as ChatOpenAI
+    const classifier = classifierModel.withStructuredOutput(MEMORY_INTENT_SCHEMA)
+    const invoke = classifier.invoke([
+      new SystemMessage(MEMORY_INTENT_SYSTEM),
+      new HumanMessage(text.slice(0, 500)),
+    ])
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('memory-intent timeout')), 3500)
+    )
+    const result = await Promise.race([invoke, timeout])
+    const intents = unique((result.intents ?? []).filter(intent => intent !== 'none')) as MemoryIntent[]
+    if (intents.length === 0) return rule
+
+    return {
+      intents,
+      strength: 'strong',
+      queries: inferQueries(text),
+      requiredTools: toolsForIntents(intents),
+    }
+  } catch (err) {
+    console.warn('[spirit] memory intent classifier failed, fallback to rules:', err instanceof Error ? err.message : err)
+    return rule
+  }
+}
+
 function dailyLogItems(limit = 7): MemoryPackItem[] {
   return getRecentDailyLogs(limit).map(log => {
     const parts = log.activities.map(a => {
@@ -120,6 +188,18 @@ function weeklyPatternItems(limit = 4): MemoryPackItem[] {
     title: `${pattern.weekStart} 周规律`,
     summary: `${pattern.narrative}${pattern.flags.length ? ` 隐患：${pattern.flags.join('、')}` : ''}`,
     confidence: 0.8,
+  }))
+}
+
+function sessionSummaryItems(limit = 10): MemoryPackItem[] {
+  return getRecentSummaries(limit).map(summary => ({
+    type: 'session_summary',
+    id: `session_summary:${summary.date}`,
+    date: summary.date,
+    title: summary.topics.length ? summary.topics.join('、') : '当日对话摘要',
+    summary: summary.summary,
+    source: `content/spirit/summaries/${summary.date}.json`,
+    confidence: 0.72,
   }))
 }
 
@@ -225,12 +305,25 @@ function conversationItems(queries: string[], limit = 6): MemoryPackItem[] {
   }))
 }
 
-export function prefetchMemoryPack(text: string): PrefetchedMemoryPack {
-  const intent = inferMemoryIntent(text)
+function toolsForIntents(intents: MemoryIntent[]): string[] {
+  const requiredTools: string[] = []
+  if (intents.includes('recent_status')) requiredTools.push('get_daily_logs', 'get_weekly_patterns', 'search_conversations')
+  if (intents.includes('weekly_pattern')) requiredTools.push('get_weekly_patterns')
+  if (intents.includes('vow_progress')) requiredTools.push('vow_summary')
+  if (intents.includes('skill_lookup')) requiredTools.push('search_skills')
+  if (intents.includes('conversation_lookup')) requiredTools.push('search_conversations')
+  if (intents.includes('note_lookup')) requiredTools.push('search_notes')
+  return unique(requiredTools)
+}
+
+function buildPrefetchedMemoryPack(intent: MemoryIntentResult): PrefetchedMemoryPack {
   if (intent.strength === 'none') return { intent, items: [] }
 
   const items: MemoryPackItem[] = []
-  if (intent.intents.includes('recent_status')) items.push(...dailyLogItems(7))
+  if (intent.intents.includes('recent_status')) {
+    items.push(...dailyLogItems(14))
+    items.push(...sessionSummaryItems(14))
+  }
   if (intent.intents.includes('weekly_pattern')) items.push(...weeklyPatternItems(4))
   if (intent.intents.includes('vow_progress')) items.push(...vowItems())
   if (intent.intents.includes('skill_lookup')) items.push(...skillItems(intent.queries))
@@ -242,4 +335,15 @@ export function prefetchMemoryPack(text: string): PrefetchedMemoryPack {
     items,
     content: items.length ? formatMemoryPack(items.slice(0, 24), '服务端预取记忆') : undefined,
   }
+}
+
+export function prefetchMemoryPack(text: string): PrefetchedMemoryPack {
+  return buildPrefetchedMemoryPack(inferMemoryIntent(text))
+}
+
+export async function prefetchMemoryPackWithAI(
+  text: string,
+  model: ChatOpenAI,
+): Promise<PrefetchedMemoryPack> {
+  return buildPrefetchedMemoryPack(await inferMemoryIntentWithAI(text, model))
 }
