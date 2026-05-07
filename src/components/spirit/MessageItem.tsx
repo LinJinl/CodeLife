@@ -572,6 +572,26 @@ export const MessageItem = memo(function MessageItem({
           )}
         </div>
       )}
+      {msg.auditId && (
+        <button
+          onClick={() => msg.onAudit?.(msg.auditId!)}
+          style={{
+            display: 'inline-block',
+            marginTop: 8,
+            padding: 0,
+            background: 'transparent',
+            border: 'none',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9,
+            color: 'var(--jade)',
+            cursor: 'pointer',
+            borderBottom: '1px solid rgba(74,125,94,0.35)',
+            letterSpacing: 1,
+          }}
+        >
+          查看实际上下文审计
+        </button>
+      )}
       {hasCards && <LibraryCards entries={msg.cards!} />}
       {msg.skillCard  && <SkillCards cards={[msg.skillCard]} />}
       {msg.skillCards && <SkillCards cards={msg.skillCards} />}

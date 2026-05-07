@@ -1,4 +1,5 @@
 import { getContextRun, listContextRuns } from '@/lib/spirit/context-audit'
+import { buildKnowledgeGraph, filterKnowledgeGraph, type KnowledgeNodeType } from '@/lib/spirit/knowledge-graph'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
@@ -6,12 +7,17 @@ export const dynamic = 'force-dynamic'
 export default async function SpiritKnowledgePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ id?: string }>
+  searchParams?: Promise<{ id?: string; graphType?: string; q?: string }>
 }) {
   const params = await searchParams
   const runs = listContextRuns(80)
   const selectedId = params?.id ?? runs[0]?.id
   const selected = selectedId ? getContextRun(selectedId) : null
+  const graph = filterKnowledgeGraph(buildKnowledgeGraph(), {
+    type: params?.graphType as KnowledgeNodeType | undefined,
+    q: params?.q,
+    limit: 80,
+  })
 
   return (
     <div className="page-content">
@@ -113,8 +119,61 @@ export default async function SpiritKnowledgePage({
           )}
         </main>
       </div>
+
+      <section style={{
+        maxWidth: 1120,
+        margin: '0 auto',
+        padding: '0 28px 120px',
+      }}>
+        <div style={PANEL}>
+          <PanelTitle>知识图谱节点</PanelTitle>
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 8,
+            marginBottom: 18,
+          }}>
+            <GraphFilter label="全部" />
+            <GraphFilter label="博客" type="blog" />
+            <GraphFilter label="技能" type="skill" />
+            <GraphFilter label="偏好" type="preference" />
+            <GraphFilter label="对话摘要" type="conversation_summary" />
+            <GraphFilter label="日志" type="daily_log" />
+            <GraphFilter label="誓愿" type="vow" />
+            <GraphFilter label="审计" type="context_run" />
+          </div>
+          <div style={{
+            fontFamily: 'var(--font-serif)',
+            fontSize: 12,
+            color: 'var(--ink-trace)',
+            marginBottom: 18,
+          }}>
+            当前节点 {graph.nodes.length} 个，关系 {graph.edges.length} 条。第一版先做可浏览列表，图形可视化后续基于这些节点和边渲染。
+          </div>
+          <div style={NODE_GRID}>
+            {graph.nodes.map(node => (
+              <article key={node.id} style={NODE_CARD}>
+                <div style={ITEM_HEAD}>{nodeTypeLabel(node.type)} {node.date ? `· ${node.date}` : ''}</div>
+                <h3 style={NODE_TITLE}>{node.title}</h3>
+                <p style={P}>{node.summary}</p>
+                {node.tags.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                    {node.tags.slice(0, 5).map(tag => <span key={tag} style={TAG}>{tag}</span>)}
+                  </div>
+                )}
+                <div style={SOURCE}>来源：{node.source}</div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
     </div>
   )
+}
+
+function GraphFilter({ label, type }: { label: string; type?: KnowledgeNodeType }) {
+  const href = type ? `/spirit/knowledge?graphType=${type}` : '/spirit/knowledge'
+  return <Link href={href} style={ACTION_LINK}>{label}</Link>
 }
 
 function RunDetail({ run }: { run: NonNullable<ReturnType<typeof getContextRun>> }) {
@@ -143,6 +202,27 @@ function RunDetail({ run }: { run: NonNullable<ReturnType<typeof getContextRun>>
             </div>
           ))}
         </div>
+      </Block>
+
+      <Block title="实际 Prompt 快照">
+        {!run.promptSnapshot ? (
+          <p style={P}>这条记录生成于 Prompt 快照功能之前，暂无完整消息栈。</p>
+        ) : (
+          <div>
+            <p style={{ ...P, marginBottom: 12 }}>{run.promptSnapshot.note}</p>
+            <div style={{ display: 'grid', gap: 12 }}>
+              {run.promptSnapshot.messages.map(message => (
+                <details key={message.id} open={message.source !== 'system_prompt'} style={PROMPT_BLOCK}>
+                  <summary style={PROMPT_SUMMARY}>
+                    <span>{sourceLabel(message.source)} · {roleLabel(message.role)}</span>
+                    <span style={{ color: 'var(--ink-trace)' }}>{message.chars} chars</span>
+                  </summary>
+                  <pre style={PROMPT_PRE}>{message.content}</pre>
+                </details>
+              ))}
+            </div>
+          </div>
+        )}
       </Block>
 
       <Block title="带入的长期记忆">
@@ -213,6 +293,7 @@ function buildPlainSummary(run: NonNullable<ReturnType<typeof getContextRun>>) {
       { label: '当前问题', value: run.userMessage || '未知' },
       { label: '页面上下文', value: run.route ? `来自 ${run.route}` : '没有页面上下文' },
       { label: '今日历史', value: history },
+      { label: '当前会话', value: run.currentConversation ? `保留 ${run.currentConversation.selected}/${run.currentConversation.total} 条，摘要 ${run.currentConversation.summarized} 条，约 ${run.currentConversation.chars} 字` : '未记录当前会话压缩信息' },
       { label: '长期记忆', value: run.memoryGate.items.length > 0 ? `带入 ${run.memoryGate.items.length} 条，类型：${memoryTypes.join('、')}` : '没有额外带入' },
       { label: '工具范围', value: run.domains.length > 0 ? run.domains.map(domainLabel).join('、') : '默认范围' },
       { label: '执行方式', value: `${mode}回答${run.planner.taskCount ? `，任务数 ${run.planner.taskCount}` : ''}` },
@@ -252,6 +333,44 @@ function domainLabel(domain: string) {
     debug: '调试',
   }
   return map[domain] ?? domain
+}
+
+function nodeTypeLabel(type: string) {
+  const map: Record<string, string> = {
+    blog: '博客',
+    skill: '技能卡',
+    preference: '偏好',
+    conversation_summary: '对话摘要',
+    daily_log: '日志',
+    weekly_pattern: '周规律',
+    vow: '誓愿',
+    context_run: '审计',
+  }
+  return map[type] ?? type
+}
+
+function sourceLabel(source: string) {
+  const map: Record<string, string> = {
+    system_prompt: '系统提示',
+    memory_gate: '记忆门控',
+    prefetched_memory: '预取记忆',
+    today_history: '今日历史',
+    page_context: '页面上下文',
+    conversation: '对话消息',
+    runtime: '运行时消息',
+  }
+  return map[source] ?? source
+}
+
+function roleLabel(role: string) {
+  const map: Record<string, string> = {
+    system: 'system',
+    user: 'user',
+    assistant: 'assistant',
+    tool: 'tool',
+    unknown: 'unknown',
+  }
+  return map[role] ?? role
 }
 
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
@@ -329,10 +448,10 @@ const ACTION_LINK: React.CSSProperties = {
 }
 
 const BLOCK_TITLE: React.CSSProperties = {
-  fontFamily: 'var(--font-xiaowei), serif',
+  fontFamily: 'var(--font-serif), serif',
   fontSize: 14,
   color: 'var(--ink)',
-  letterSpacing: 4,
+  letterSpacing: 2,
   marginBottom: 12,
 }
 
@@ -379,6 +498,67 @@ const STACK_TEXT: React.CSSProperties = {
   fontSize: 13,
   color: 'var(--ink-dim)',
   lineHeight: 1.75,
+}
+
+const PROMPT_BLOCK: React.CSSProperties = {
+  border: '1px solid var(--ink-trace)',
+  background: 'var(--void)',
+  padding: '10px 12px',
+}
+
+const PROMPT_SUMMARY: React.CSSProperties = {
+  cursor: 'pointer',
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: 12,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  color: 'var(--jade)',
+}
+
+const PROMPT_PRE: React.CSSProperties = {
+  margin: '10px 0 0',
+  padding: '10px 12px',
+  maxHeight: 360,
+  overflow: 'auto',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  background: 'var(--deep)',
+  color: 'var(--ink-dim)',
+  border: '1px solid var(--ink-trace)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  lineHeight: 1.7,
+}
+
+const NODE_GRID: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+  gap: 12,
+}
+
+const NODE_CARD: React.CSSProperties = {
+  border: '1px solid var(--ink-trace)',
+  background: 'var(--void)',
+  padding: '12px 14px',
+  minHeight: 170,
+}
+
+const NODE_TITLE: React.CSSProperties = {
+  fontFamily: 'var(--font-xiaowei), serif',
+  fontSize: 15,
+  color: 'var(--ink)',
+  letterSpacing: 2,
+  margin: '0 0 9px',
+  lineHeight: 1.45,
+}
+
+const TAG: React.CSSProperties = {
+  border: '1px solid var(--ink-trace)',
+  color: 'var(--ink-dim)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 9,
+  padding: '2px 6px',
 }
 
 const ITEM: React.CSSProperties = {

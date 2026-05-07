@@ -27,12 +27,32 @@ export interface PackedTodayHistory {
   diagnostics: PackedTodayHistoryDiagnostics
 }
 
+export interface PackedCurrentConversation {
+  summary?: string
+  messages: { role: 'user' | 'assistant' | 'system'; content: string }[]
+  diagnostics: {
+    total: number
+    selected: number
+    summarized: number
+    chars: number
+    truncated: number
+  }
+}
+
 export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   todaySummaryChars: 800,
   recentHistoryChars: 1000,
   minRecentMessages: 4,
   maxRecentMessages: 8,
   maxSingleMessageChars: 500,
+}
+
+const CURRENT_CONVERSATION_BUDGET = {
+  summaryChars: 900,
+  recentChars: 2400,
+  minRecentMessages: 6,
+  maxRecentMessages: 12,
+  maxSingleMessageChars: 900,
 }
 
 function normalizeContent(content: string): string {
@@ -73,6 +93,36 @@ function buildEarlierSummary(messages: ConversationMessage[], maxChars: number):
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
     const line = compressMessageToLine(message)
+    if (chars + line.length + 1 > maxChars) break
+    lines.unshift(line)
+    chars += line.length + 1
+  }
+
+  if (lines.length === 0) return undefined
+  return `${header}\n${lines.join('\n')}`
+}
+
+function compressCurrentMessageToLine(message: { role: string; content: string }): string {
+  const role = message.role === 'assistant' ? '助手' : message.role === 'system' ? '系统' : '用户'
+  const content = normalizeContent(message.content)
+  const maxChars = message.role === 'user' ? 120 : message.role === 'assistant' ? 180 : 160
+  const compact = content.length <= maxChars
+    ? content
+    : `${content.slice(0, Math.floor(maxChars * 0.55)).trimEnd()} ... ${content.slice(-Math.floor(maxChars * 0.35)).trimStart()}`
+  return `- ${role}：${compact}`
+}
+
+function buildCurrentConversationSummary(
+  messages: { role: 'user' | 'assistant' | 'system'; content: string }[],
+  maxChars: number,
+): string | undefined {
+  if (messages.length === 0) return undefined
+  const header = `【本轮较早对话摘要】共 ${messages.length} 条较早消息，以下为压缩摘录；若需要精确原文，应调用历史对话检索工具。`
+  const lines: string[] = []
+  let chars = header.length
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const line = compressCurrentMessageToLine(messages[i])
     if (chars + line.length + 1 > maxChars) break
     lines.unshift(line)
     chars += line.length + 1
@@ -157,4 +207,59 @@ export function packTodayHistory(
   diagnostics.chars = chars + (summary?.length ?? 0)
 
   return { summary, messages: recent.map(item => item.message), diagnostics }
+}
+
+export function packCurrentConversation(
+  messages: { role: 'user' | 'assistant' | 'system'; content: string }[],
+  budget = CURRENT_CONVERSATION_BUDGET,
+): PackedCurrentConversation {
+  const usable = messages
+    .filter(message => message.role === 'user' || message.role === 'assistant' || message.role === 'system')
+    .filter(message => normalizeContent(message.content).length > 0)
+  const diagnostics = {
+    total: usable.length,
+    selected: 0,
+    summarized: 0,
+    chars: 0,
+    truncated: 0,
+  }
+
+  if (usable.length === 0) return { messages: [], diagnostics }
+
+  const currentUserIndex = usable.map(message => message.role).lastIndexOf('user')
+  const currentUser = currentUserIndex >= 0 ? usable[currentUserIndex] : usable[usable.length - 1]
+  const beforeCurrent = currentUserIndex >= 0 ? usable.slice(0, currentUserIndex) : usable.slice(0, -1)
+
+  const recent: { index: number; message: { role: 'user' | 'assistant' | 'system'; content: string } }[] = []
+  let chars = normalizeContent(currentUser.content).length
+
+  for (let i = beforeCurrent.length - 1; i >= 0 && recent.length < budget.maxRecentMessages; i--) {
+    const original = beforeCurrent[i]
+    const packed = truncateContent(original.content, budget.maxSingleMessageChars)
+    const message = { ...original, content: packed.content }
+    const isRequiredRecent = recent.length < budget.minRecentMessages
+    const cost = message.content.length
+
+    if (!isRequiredRecent && chars + cost > budget.recentChars) continue
+    recent.push({ index: i, message })
+    chars += cost
+    if (packed.truncated) diagnostics.truncated++
+  }
+
+  recent.reverse()
+  const earliestRecentIndex = recent[0]?.index ?? beforeCurrent.length
+  const earlier = beforeCurrent.slice(0, earliestRecentIndex)
+  const summary = buildCurrentConversationSummary(earlier, budget.summaryChars)
+
+  const packedMessages = [
+    ...(summary ? [{ role: 'system' as const, content: summary }] : []),
+    ...recent.map(item => item.message),
+    currentUser,
+  ]
+
+  diagnostics.selected = recent.length + 1
+  diagnostics.summarized = summary ? earlier.length : 0
+  diagnostics.chars = packedMessages.reduce((sum, message) => sum + message.content.length, 0)
+
+  return { summary, messages: packedMessages, diagnostics }
 }

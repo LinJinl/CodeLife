@@ -44,6 +44,8 @@ export type SpiritEvent =
   | { type: 'task_done';   taskId: string; agent: string }
   // ── 权限请求 ───────────────────────────────────────────────
   | { type: 'permission_request'; token: string; command: string; workdir: string; level: 'moderate' | 'destructive' | 'write' }
+  // ── 回答完成后的真实上下文审计入口 ───────────────────────
+  | { type: 'context_audit'; id: string }
 
 /** 序列化成 SSE data 行 */
 export function encodeEvent(event: SpiritEvent): string {

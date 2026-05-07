@@ -18,18 +18,20 @@ import { encodeEvent }         from '@/lib/spirit/protocol'
 import { getCompiledGraph, getRecursionLimit } from '@/lib/spirit/langgraph/graph'
 import { getDailyLog }                         from '@/lib/spirit/memory'
 import { dateInTZ }                            from '@/lib/spirit/time'
-import { packTodayHistory }                    from '@/lib/spirit/context'
+import { packCurrentConversation, packTodayHistory } from '@/lib/spirit/context'
 import { prefetchMemoryPackWithAI, type PrefetchedMemoryPack } from '@/lib/spirit/memory-gate'
 import { ensureConfiguredMCPServersLoaded }    from '@/lib/spirit/mcp-runtime'
 import { syncToday }           from '@/lib/spirit/sync'
 import { quickClassify }       from '@/lib/spirit/langgraph/classify'
 import { getQingxiaoDomains, inferDomainsWithAI, type ToolDomain } from '@/lib/spirit/langgraph/tools'
 import { buildChatModel }      from '@/lib/spirit/langgraph/agents'
+import { buildSystemPrompt }   from '@/lib/spirit/prompt'
 // recursionLimit 在 planner 解析出并行任务数后才能精确计算，
 // 这里保守地用最大值（5 个并行任务）
 const DEFAULT_PARALLEL = 5
 import { translateToSpiritEvents }             from '@/lib/spirit/langgraph/stream'
 import {
+  attachPromptSnapshot,
   attachMemoryGate,
   consumeAuditEvent,
   createContextRun,
@@ -69,6 +71,21 @@ function loadTodayHistory(
   }
 }
 
+function lcRole(message: BaseMessage): 'system' | 'user' | 'assistant' | 'tool' | 'unknown' {
+  const type = message._getType()
+  if (type === 'system') return 'system'
+  if (type === 'human') return 'user'
+  if (type === 'ai') return 'assistant'
+  if (type === 'tool') return 'tool'
+  return 'unknown'
+}
+
+function lcContent(message: BaseMessage): string {
+  const content = message.content
+  if (typeof content === 'string') return content
+  return JSON.stringify(content)
+}
+
 export async function POST(req: NextRequest) {
   const spirit = config.spirit
   if (!spirit?.enabled) return new Response('器灵未开启', { status: 403 })
@@ -82,16 +99,19 @@ export async function POST(req: NextRequest) {
   // 今日 DailyLog 不存在则先同步（保证记忆有数据）
   const today = dateInTZ()
 
-  // 把前端消息历史转换为 LangChain BaseMessage
-  const currentMsgs = messages.map(m => {
+  const packedCurrentConversation = packCurrentConversation(messages)
+
+  // 把前端当前会话窗口化后转换为 LangChain BaseMessage：
+  // 较早消息压成摘录，最近几轮保留原文，当前用户消息始终保留原文。
+  const currentMsgs = packedCurrentConversation.messages.map(m => {
     if (m.role === 'system')    return new SystemMessage(m.content)
     if (m.role === 'assistant') return new AIMessage(m.content)
     return new HumanMessage(m.content)
   })
 
-  // 今日已保存的历史作为真实消息 prepend（Issue 3）
-  const todayHistoryPack  = loadTodayHistory(messages)
-  const todayHistory      = todayHistoryPack.messages
+  // 今日已保存的历史作为真实消息 prepend。
+  const todayHistoryPack = packTodayHistory(messages)
+  const todayHistory = loadTodayHistory(messages).messages
   const langchainMessages = [...todayHistory, ...currentMsgs]
 
   const lastUserMsg  = langchainMessages.findLast(m => m._getType() === 'human')
@@ -129,6 +149,7 @@ export async function POST(req: NextRequest) {
       truncated: todayHistoryPack.diagnostics.truncated,
       deduped: todayHistoryPack.diagnostics.deduped,
     },
+    currentConversation: packedCurrentConversation.diagnostics,
   })
   const auditFinalText = { value: '' }
 
@@ -161,6 +182,13 @@ export async function POST(req: NextRequest) {
           ...(prefetchedMemoryMessage ? [prefetchedMemoryMessage] : []),
           ...langchainMessages,
         ]
+        attachPromptSnapshot(auditRun, {
+          systemPrompt: buildSystemPrompt(),
+          messages: graphMessages.map(message => ({
+            role: lcRole(message),
+            content: lcContent(message),
+          })),
+        })
         if (prefetchedMemory.intent.strength !== 'none') {
           console.log(
             `[spirit] memory gate: intents=${prefetchedMemory.intent.intents.join(',')} items=${prefetchedMemory.items.length} tools=${prefetchedMemory.intent.requiredTools.join(',') || 'none'}`,
@@ -187,8 +215,8 @@ export async function POST(req: NextRequest) {
 
         for await (const spiritEvent of translateToSpiritEvents(eventStream)) {
           consumeAuditEvent(auditRun, spiritEvent, auditFinalText)
-          push(encodeEvent(spiritEvent))
           if (spiritEvent.type === 'done') break
+          push(encodeEvent(spiritEvent))
         }
         auditRun.finalAnswerPreview = auditFinalText.value
         console.log('[spirit] chat done')
@@ -200,6 +228,8 @@ export async function POST(req: NextRequest) {
       } finally {
         auditRun.finalAnswerPreview = auditFinalText.value || auditRun.finalAnswerPreview
         saveContextRun(auditRun)
+        push(encodeEvent({ type: 'context_audit', id: auditRun.id }))
+        push(encodeEvent({ type: 'done' }))
         ctrl.close()
       }
     },

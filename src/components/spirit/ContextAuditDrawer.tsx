@@ -8,10 +8,11 @@ type LoadState = 'idle' | 'loading' | 'error'
 interface ContextAuditDrawerProps {
   open: boolean
   onClose: () => void
+  targetId?: string | null
   refreshKey?: string | number
 }
 
-export function ContextAuditDrawer({ open, onClose, refreshKey }: ContextAuditDrawerProps) {
+export function ContextAuditDrawer({ open, onClose, targetId, refreshKey }: ContextAuditDrawerProps) {
   const [runs, setRuns] = useState<ContextRunSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selected, setSelected] = useState<ContextRun | null>(null)
@@ -21,6 +22,12 @@ export function ContextAuditDrawer({ open, onClose, refreshKey }: ContextAuditDr
     if (!open) return
     void loadRuns()
   }, [open, refreshKey])
+
+  useEffect(() => {
+    if (!open || !targetId) return
+    setSelectedId(targetId)
+    void loadRun(targetId)
+  }, [open, targetId])
 
   useEffect(() => {
     if (!open || !selectedId) return
@@ -37,7 +44,7 @@ export function ContextAuditDrawer({ open, onClose, refreshKey }: ContextAuditDr
       setRuns(nextRuns)
       setSelectedId(current => current && nextRuns.some(run => run.id === current)
         ? current
-        : nextRuns[0]?.id ?? null)
+        : targetId ?? nextRuns[0]?.id ?? null)
       if (nextRuns.length === 0) setSelected(null)
       setState('idle')
     } catch {
@@ -160,6 +167,27 @@ export function ContextAuditDrawer({ open, onClose, refreshKey }: ContextAuditDr
                   )}
                 </AuditSection>
 
+                <AuditSection title="实际 Prompt 快照">
+                  {!selected.promptSnapshot ? (
+                    <p style={P}>这条记录生成于 Prompt 快照功能之前，暂无完整消息栈。</p>
+                  ) : (
+                    <div>
+                      <p style={{ ...P, marginBottom: 12 }}>{selected.promptSnapshot.note}</p>
+                      <div style={{ display: 'grid', gap: 10 }}>
+                        {selected.promptSnapshot.messages.map(message => (
+                          <details key={message.id} open={message.source !== 'system_prompt'} style={PROMPT_BLOCK}>
+                            <summary style={PROMPT_SUMMARY}>
+                              <span>{sourceLabel(message.source)} · {message.role}</span>
+                              <span style={{ color: 'var(--ink-trace)' }}>{message.chars} chars</span>
+                            </summary>
+                            <pre style={PROMPT_PRE}>{message.content}</pre>
+                          </details>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </AuditSection>
+
                 <AuditSection title="回答预览">
                   <p style={P}>{selected.finalAnswerPreview || '本轮没有文本回答。'}</p>
                 </AuditSection>
@@ -191,6 +219,7 @@ function buildPlainSummary(run: ContextRun) {
       { label: '当前问题', value: run.userMessage || '未知' },
       { label: '页面上下文', value: run.route ? `来自 ${run.route}` : '没有页面上下文' },
       { label: '今日历史', value: history },
+      { label: '当前会话', value: run.currentConversation ? `保留 ${run.currentConversation.selected}/${run.currentConversation.total} 条，摘要 ${run.currentConversation.summarized} 条，约 ${run.currentConversation.chars} 字` : '未记录当前会话压缩信息' },
       { label: '长期记忆', value: run.memoryGate.items.length > 0 ? `带入 ${run.memoryGate.items.length} 条，类型：${unique(run.memoryGate.items.map(item => memoryTypeLabel(item.type))).join('、')}` : '没有额外带入' },
       { label: '工具范围', value: run.domains.length ? run.domains.map(domainLabel).join('、') : '默认范围' },
       { label: '执行方式', value: run.planner.strategy === 'parallel' ? '拆分为并行任务' : run.planner.strategy === 'sequential' ? '拆分为顺序任务' : '直接回答' },
@@ -229,6 +258,19 @@ function domainLabel(domain: string) {
     debug: '调试',
   }
   return map[domain] ?? domain
+}
+
+function sourceLabel(source: string) {
+  const map: Record<string, string> = {
+    system_prompt: '系统提示',
+    memory_gate: '记忆门控',
+    prefetched_memory: '预取记忆',
+    today_history: '今日历史',
+    page_context: '页面上下文',
+    conversation: '对话消息',
+    runtime: '运行时消息',
+  }
+  return map[source] ?? source
 }
 
 function clip(text: string, max: number) {
@@ -464,4 +506,35 @@ const EMPTY: React.CSSProperties = {
   fontSize: 13,
   color: 'var(--ink-trace)',
   lineHeight: 1.8,
+}
+
+const PROMPT_BLOCK: React.CSSProperties = {
+  border: '1px solid var(--ink-trace)',
+  background: 'var(--deep)',
+  padding: '9px 11px',
+}
+
+const PROMPT_SUMMARY: React.CSSProperties = {
+  cursor: 'pointer',
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: 12,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  color: 'var(--jade)',
+}
+
+const PROMPT_PRE: React.CSSProperties = {
+  margin: '10px 0 0',
+  padding: '10px 12px',
+  maxHeight: 320,
+  overflow: 'auto',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  background: 'var(--void)',
+  color: 'var(--ink-dim)',
+  border: '1px solid var(--ink-trace)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  lineHeight: 1.7,
 }

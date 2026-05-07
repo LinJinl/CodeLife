@@ -34,6 +34,8 @@ export interface Message {
   ctxLabels?:         string[]
   permissionRequest?: PermissionRequest
   thinking?:          string
+  auditId?:           string
+  onAudit?:           (id: string) => void
 }
 
 export interface MCPInfo {

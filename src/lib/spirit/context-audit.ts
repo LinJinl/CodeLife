@@ -6,6 +6,15 @@ import type { PrefetchedMemoryPack } from './memory-gate'
 import { clampSummary, type MemoryPackItem } from './memory-pack'
 import { dateInTZ, timeInTZ } from './time'
 
+export interface ContextPromptMessage {
+  id: string
+  role: 'system' | 'user' | 'assistant' | 'tool' | 'unknown'
+  source: 'system_prompt' | 'memory_gate' | 'prefetched_memory' | 'today_history' | 'page_context' | 'conversation' | 'runtime'
+  title: string
+  content: string
+  chars: number
+}
+
 export interface ContextRunTool {
   name: string
   display?: string
@@ -37,6 +46,13 @@ export interface ContextRun {
     truncated: number
     deduped: boolean
   }
+  currentConversation?: {
+    total: number
+    selected: number
+    summarized: number
+    chars: number
+    truncated: number
+  }
   memoryGate: {
     strength: 'strong' | 'weak' | 'none'
     intents: string[]
@@ -50,6 +66,11 @@ export interface ContextRun {
       source?: string
       summaryPreview: string
     }[]
+  }
+  promptSnapshot?: {
+    capturedAt: string
+    note: string
+    messages: ContextPromptMessage[]
   }
   tools: ContextRunTool[]
   errors: string[]
@@ -120,6 +141,7 @@ export function createContextRun(input: {
   route?: string
   model?: string
   todayHistory: ContextRun['todayHistory']
+  currentConversation?: ContextRun['currentConversation']
 }): ContextRun {
   const date = dateInTZ()
   const id = `ctx_${date.replace(/-/g, '')}_${timeInTZ().replace(':', '')}_${randomUUID().slice(0, 8)}`
@@ -135,6 +157,7 @@ export function createContextRun(input: {
     planner: { usePlanner: false },
     domains: [],
     todayHistory: input.todayHistory,
+    currentConversation: input.currentConversation,
     memoryGate: {
       strength: 'none',
       intents: ['none'],
@@ -156,6 +179,61 @@ export function attachMemoryGate(run: ContextRun, prefetch: PrefetchedMemoryPack
     items: prefetch.items.slice(0, 12).map(itemPreview),
   }
   run.updatedAt = new Date().toISOString()
+}
+
+export function attachPromptSnapshot(run: ContextRun, input: {
+  systemPrompt: string
+  messages: { role: ContextPromptMessage['role']; content: string }[]
+}) {
+  const promptMessages: ContextPromptMessage[] = [{
+    id: 'system_prompt',
+    role: 'system',
+    source: 'system_prompt',
+    title: '青霄系统提示',
+    content: input.systemPrompt,
+    chars: input.systemPrompt.length,
+  }]
+
+  input.messages.forEach((message, index) => {
+    const source = inferPromptSource(message)
+    promptMessages.push({
+      id: `${source}:${index}`,
+      role: message.role,
+      source,
+      title: promptTitle(source, message.role, index),
+      content: message.content,
+      chars: message.content.length,
+    })
+  })
+
+  run.promptSnapshot = {
+    capturedAt: new Date().toISOString(),
+    note: '这是进入 LangGraph 主助手的实际消息栈。工具 schema 由 LangGraph/OpenAI 工具调用机制单独传递，不属于这段文本 prompt；真实工具调用见下方工具记录。',
+    messages: promptMessages,
+  }
+  run.updatedAt = new Date().toISOString()
+}
+
+function inferPromptSource(message: { role: ContextPromptMessage['role']; content: string }): ContextPromptMessage['source'] {
+  if (message.content.startsWith('[记忆检索门控]')) return 'memory_gate'
+  if (message.content.startsWith('【服务端预取记忆】') || message.content.startsWith('【用户确认带入的上下文】')) return 'prefetched_memory'
+  if (message.content.startsWith('[页面上下文')) return 'page_context'
+  if (message.content.startsWith('【今日较早对话摘要】')) return 'today_history'
+  if (message.role === 'user' || message.role === 'assistant') return 'conversation'
+  return 'runtime'
+}
+
+function promptTitle(source: ContextPromptMessage['source'], role: ContextPromptMessage['role'], index: number): string {
+  const labels: Record<ContextPromptMessage['source'], string> = {
+    system_prompt: '系统提示',
+    memory_gate: '记忆门控提示',
+    prefetched_memory: '预取记忆',
+    today_history: '今日历史',
+    page_context: '页面上下文',
+    conversation: role === 'user' ? '用户消息' : '助手消息',
+    runtime: '运行时系统消息',
+  }
+  return `${labels[source]} #${index + 1}`
 }
 
 export function consumeAuditEvent(run: ContextRun, event: SpiritEvent, finalText: { value: string }) {

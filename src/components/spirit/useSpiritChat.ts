@@ -404,6 +404,15 @@ export function useSpiritChat(open: boolean) {
                 },
               }))
               break
+            case 'context_audit':
+              setMessages(prev => {
+                const c = [...prev]
+                const last = c[c.length - 1]
+                c[c.length - 1] = { ...last, auditId: ev.id }
+                final = c
+                return c
+              })
+              break
             case 'error': throw new Error(ev.message)
             case 'done':  break outer
           }

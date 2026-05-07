@@ -71,6 +71,7 @@ export default function SpiritPage() {
   const [readonlyMsgs,   setReadonlyMsgs]   = useState<Message[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [auditOpen,      setAuditOpen]      = useState(false)
+  const [auditTargetId,  setAuditTargetId]  = useState<string | null>(null)
 
   const chat    = useSpiritChat(true)
   const isToday = selectedDate === todayStr()
@@ -183,8 +184,8 @@ export default function SpiritPage() {
 
         <div style={{ padding: '12px 14px 8px' }}>
           <button
-            onClick={() => setAuditOpen(true)}
-            title="查看本轮携带的上下文"
+            onClick={() => { setAuditTargetId(null); setAuditOpen(true) }}
+            title="查看历史上下文审计"
             style={{
               width: '100%',
               border: '1px solid var(--ink-trace)',
@@ -206,7 +207,7 @@ export default function SpiritPage() {
               e.currentTarget.style.color = 'var(--ink-dim)'
             }}
           >
-            上下文
+            上下文审计
           </button>
         </div>
 
@@ -266,7 +267,15 @@ export default function SpiritPage() {
                 {chat.messages.map((msg, i) => (
                   <div key={i} style={{ marginBottom: 32 }}>
                     <MessageItem
-                      msg={msg}
+                      msg={{
+                        ...msg,
+                        onAudit: msg.auditId
+                          ? (id) => {
+                              setAuditTargetId(id)
+                              setAuditOpen(true)
+                            }
+                          : undefined,
+                      }}
                       isLast={i === chat.messages.length - 1}
                       loading={chat.loading}
                       phase={chat.phase}
@@ -421,6 +430,7 @@ export default function SpiritPage() {
       <ContextAuditDrawer
         open={auditOpen}
         onClose={() => setAuditOpen(false)}
+        targetId={auditTargetId}
         refreshKey={`${chat.messages.length}:${chat.loading ? 'loading' : 'idle'}`}
       />
     </div>,
