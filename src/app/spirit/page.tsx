@@ -76,6 +76,18 @@ export default function SpiritPage() {
   const chat    = useSpiritChat(true)
   const isToday = selectedDate === todayStr()
 
+  const handleAuditOpen = useCallback((id: string) => {
+    setAuditTargetId(id)
+    setAuditOpen(true)
+  }, [])
+
+  const handleAuditClose = useCallback(() => setAuditOpen(false), [])
+
+  useEffect(() => {
+    document.body.classList.add('spirit-focus-active')
+    return () => document.body.classList.remove('spirit-focus-active')
+  }, [])
+
   useEffect(() => {
     fetch('/api/spirit/session?list=true')
       .then(r => r.json())
@@ -267,18 +279,11 @@ export default function SpiritPage() {
                 {chat.messages.map((msg, i) => (
                   <div key={i} style={{ marginBottom: 32 }}>
                     <MessageItem
-                      msg={{
-                        ...msg,
-                        onAudit: msg.auditId
-                          ? (id) => {
-                              setAuditTargetId(id)
-                              setAuditOpen(true)
-                            }
-                          : undefined,
-                      }}
+                      msg={msg}
                       isLast={i === chat.messages.length - 1}
                       loading={chat.loading}
                       phase={chat.phase}
+                      onAudit={msg.auditId ? handleAuditOpen : undefined}
                       onPermission={
                         msg.permissionRequest
                           ? (d) => chat.handlePermission(i, d, msg.permissionRequest!.token)
@@ -429,7 +434,7 @@ export default function SpiritPage() {
 
       <ContextAuditDrawer
         open={auditOpen}
-        onClose={() => setAuditOpen(false)}
+        onClose={handleAuditClose}
         targetId={auditTargetId}
         refreshKey={`${chat.messages.length}:${chat.loading ? 'loading' : 'idle'}`}
       />

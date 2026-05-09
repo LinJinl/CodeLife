@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import type { ContextRun, ContextRunSummary } from '@/lib/spirit/context-audit'
 
 type LoadState = 'idle' | 'loading' | 'error'
@@ -12,7 +12,7 @@ interface ContextAuditDrawerProps {
   refreshKey?: string | number
 }
 
-export function ContextAuditDrawer({ open, onClose, targetId, refreshKey }: ContextAuditDrawerProps) {
+export const ContextAuditDrawer = memo(function ContextAuditDrawer({ open, onClose, targetId, refreshKey }: ContextAuditDrawerProps) {
   const [runs, setRuns] = useState<ContextRunSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selected, setSelected] = useState<ContextRun | null>(null)
@@ -198,7 +198,7 @@ export function ContextAuditDrawer({ open, onClose, targetId, refreshKey }: Cont
       </aside>
     </div>
   )
-}
+})
 
 function AuditSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (

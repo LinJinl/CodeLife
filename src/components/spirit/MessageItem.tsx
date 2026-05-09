@@ -402,13 +402,14 @@ function PermissionView({
 // ── 主消息条目 ─────────────────────────────────────────────────
 
 export const MessageItem = memo(function MessageItem({
-  msg, isLast, loading, phase, onPermission,
+  msg, isLast, loading, phase, onPermission, onAudit,
 }: {
   msg:           Message
   isLast:        boolean
   loading:       boolean
   phase:         'idle' | 'thinking' | 'tooling' | 'replying'
   onPermission?: (decision: 'once' | 'session' | 'deny') => void
+  onAudit?:      (id: string) => void
 }) {
   const streamingThinking = loading && isLast && phase === 'thinking' && !!msg.thinking
   if (msg.role === 'user') {
@@ -574,7 +575,7 @@ export const MessageItem = memo(function MessageItem({
       )}
       {msg.auditId && (
         <button
-          onClick={() => msg.onAudit?.(msg.auditId!)}
+          onClick={() => onAudit?.(msg.auditId!)}
           style={{
             display: 'inline-block',
             marginTop: 8,

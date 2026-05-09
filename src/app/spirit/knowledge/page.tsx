@@ -1,22 +1,26 @@
+import { KnowledgeGraphWorkbench } from '@/components/spirit/KnowledgeGraphWorkbench'
 import { getContextRun, listContextRuns } from '@/lib/spirit/context-audit'
 import { buildKnowledgeGraph, filterKnowledgeGraph, type KnowledgeNodeType } from '@/lib/spirit/knowledge-graph'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
 
+type KnowledgeView = 'graph' | 'list' | 'audit'
+
 export default async function SpiritKnowledgePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ id?: string; graphType?: string; q?: string }>
+  searchParams?: Promise<{ id?: string; graphType?: string; q?: string; view?: string }>
 }) {
   const params = await searchParams
+  const view = resolveView(params?.view)
   const runs = listContextRuns(80)
   const selectedId = params?.id ?? runs[0]?.id
   const selected = selectedId ? getContextRun(selectedId) : null
   const graph = filterKnowledgeGraph(buildKnowledgeGraph(), {
     type: params?.graphType as KnowledgeNodeType | undefined,
     q: params?.q,
-    limit: 80,
+    limit: view === 'graph' ? 180 : 80,
   })
 
   return (
@@ -38,7 +42,7 @@ export default async function SpiritKnowledgePage({
           color: 'var(--gold)',
           opacity: 0.88,
           marginBottom: 14,
-        }}>上下文知图</div>
+        }}>能力知图</div>
         <div style={{
           fontFamily: 'var(--font-serif)',
           fontSize: 13,
@@ -46,7 +50,7 @@ export default async function SpiritKnowledgePage({
           textIndent: 4,
           color: 'var(--ink-dim)',
         }}>
-          看清青霄每次回答前实际看见了什么
+          按能力方向整理文章、技能和助手经验
         </div>
         <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap', justifyContent: 'center' }}>
           <Link href="/spirit" style={ACTION_LINK}>进入器灵</Link>
@@ -54,126 +58,153 @@ export default async function SpiritKnowledgePage({
         </div>
       </section>
 
-      <div style={{
-        maxWidth: 1120,
-        margin: '0 auto',
-        padding: '0 28px 100px',
-        display: 'grid',
-        gridTemplateColumns: 'minmax(260px, 340px) minmax(0, 1fr)',
-        gap: 24,
-        alignItems: 'start',
-      }}>
-        <aside style={PANEL}>
-          <PanelTitle>最近对话</PanelTitle>
-          {runs.length === 0 ? (
-            <p style={P}>暂无审计记录。下一次和青霄对话后会自动生成。</p>
-          ) : (
-            <div style={{ display: 'grid', gap: 10 }}>
-              {runs.map(run => (
-                <Link
-                  key={run.id}
-                  href={`/spirit/knowledge?id=${run.id}`}
-                  style={{
-                    display: 'block',
-                    textDecoration: 'none',
-                    border: `1px solid ${run.id === selectedId ? 'var(--gold-line)' : 'var(--ink-trace)'}`,
-                    background: run.id === selectedId ? 'var(--surface)' : 'var(--void)',
-                    padding: '11px 12px',
-                  }}
-                >
-                  <div style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 9,
-                    color: 'var(--ink-trace)',
-                    marginBottom: 6,
-                  }}>
-                    {formatTime(run.createdAt)}
-                  </div>
-                  <div style={{
-                    fontFamily: 'var(--font-serif)',
-                    fontSize: 12,
-                    color: 'var(--ink)',
-                    lineHeight: 1.65,
-                  }}>
-                    {clip(run.userMessage, 86)}
-                  </div>
-                  <div style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 9,
-                    color: 'var(--jade)',
-                    marginTop: 7,
-                  }}>
-                    带入记忆 {run.prefetchedCount} · 调用工具 {run.toolCount}
-                  </div>
-                </Link>
+      <nav style={TAB_BAR}>
+        <TabLink href="/spirit/knowledge?view=graph" active={view === 'graph'}>知识图谱</TabLink>
+        <TabLink href="/spirit/knowledge?view=list" active={view === 'list'}>节点清单</TabLink>
+        <TabLink href="/spirit/knowledge?view=audit" active={view === 'audit'}>上下文审计</TabLink>
+      </nav>
+
+      {view === 'graph' && (
+        <section style={WIDE_SECTION}>
+          <div style={SECTION_HEAD}>
+            <PanelTitle>能力地图</PanelTitle>
+            <p style={P}>
+              按 Agent、RAG、LLM 基础、AI 工程化等方向整理个人能力点。点击能力点即可查看关联博文。
+            </p>
+          </div>
+          <KnowledgeGraphWorkbench graph={graph} />
+        </section>
+      )}
+
+      {view === 'audit' && (
+        <div style={AUDIT_LAYOUT}>
+          <aside style={PANEL}>
+            <PanelTitle>最近对话</PanelTitle>
+            {runs.length === 0 ? (
+              <p style={P}>暂无审计记录。下一次和青霄对话后会自动生成。</p>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {runs.map(run => (
+                  <Link
+                    key={run.id}
+                    href={`/spirit/knowledge?view=audit&id=${run.id}`}
+                    style={{
+                      display: 'block',
+                      textDecoration: 'none',
+                      border: `1px solid ${run.id === selectedId ? 'var(--gold-line)' : 'var(--ink-trace)'}`,
+                      background: run.id === selectedId ? 'var(--surface)' : 'var(--void)',
+                      padding: '11px 12px',
+                    }}
+                  >
+                    <div style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 9,
+                      color: 'var(--ink-trace)',
+                      marginBottom: 6,
+                    }}>
+                      {formatTime(run.createdAt)}
+                    </div>
+                    <div style={{
+                      fontFamily: 'var(--font-serif)',
+                      fontSize: 12,
+                      color: 'var(--ink)',
+                      lineHeight: 1.65,
+                    }}>
+                      {clip(run.userMessage, 86)}
+                    </div>
+                    <div style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 9,
+                      color: 'var(--jade)',
+                      marginTop: 7,
+                    }}>
+                      带入记忆 {run.prefetchedCount} · 调用工具 {run.toolCount}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </aside>
+
+          <main style={PANEL}>
+            {!selected ? (
+              <p style={P}>选择一条审计记录查看详情。</p>
+            ) : (
+              <RunDetail run={selected} />
+            )}
+          </main>
+        </div>
+      )}
+
+      {view === 'list' && (
+        <section style={SECTION}>
+          <div style={PANEL}>
+            <PanelTitle>能力地图节点</PanelTitle>
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              marginBottom: 18,
+            }}>
+              <GraphFilter label="全部" />
+              <GraphFilter label="能力方向" type="capability_domain" />
+              <GraphFilter label="能力点" type="capability" />
+              <GraphFilter label="博客" type="blog" />
+            </div>
+            <div style={{
+              fontFamily: 'var(--font-serif)',
+              fontSize: 12,
+              color: 'var(--ink-trace)',
+              marginBottom: 18,
+            }}>
+              当前节点 {graph.nodes.length} 个，关系 {graph.edges.length} 条。这里用于快速扫源数据，图谱视图用于看能力方向和支撑博文。
+            </div>
+            <div style={NODE_GRID}>
+              {graph.nodes.map(node => (
+                <article key={node.id} style={NODE_CARD}>
+                  <div style={ITEM_HEAD}>{nodeTypeLabel(node.type)} {node.date ? `· ${node.date}` : ''}</div>
+                  <h3 style={NODE_TITLE}>{node.title}</h3>
+                  <p style={P}>{node.summary}</p>
+                  {node.tags.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                      {node.tags.slice(0, 5).map(tag => <span key={tag} style={TAG}>{tag}</span>)}
+                    </div>
+                  )}
+                  <div style={SOURCE}>来源：{node.source}</div>
+                </article>
               ))}
             </div>
-          )}
-        </aside>
-
-        <main style={PANEL}>
-          {!selected ? (
-            <p style={P}>选择一条审计记录查看详情。</p>
-          ) : (
-            <RunDetail run={selected} />
-          )}
-        </main>
-      </div>
-
-      <section style={{
-        maxWidth: 1120,
-        margin: '0 auto',
-        padding: '0 28px 120px',
-      }}>
-        <div style={PANEL}>
-          <PanelTitle>知识图谱节点</PanelTitle>
-          <div style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 8,
-            marginBottom: 18,
-          }}>
-            <GraphFilter label="全部" />
-            <GraphFilter label="博客" type="blog" />
-            <GraphFilter label="技能" type="skill" />
-            <GraphFilter label="偏好" type="preference" />
-            <GraphFilter label="对话摘要" type="conversation_summary" />
-            <GraphFilter label="日志" type="daily_log" />
-            <GraphFilter label="誓愿" type="vow" />
-            <GraphFilter label="审计" type="context_run" />
           </div>
-          <div style={{
-            fontFamily: 'var(--font-serif)',
-            fontSize: 12,
-            color: 'var(--ink-trace)',
-            marginBottom: 18,
-          }}>
-            当前节点 {graph.nodes.length} 个，关系 {graph.edges.length} 条。第一版先做可浏览列表，图形可视化后续基于这些节点和边渲染。
-          </div>
-          <div style={NODE_GRID}>
-            {graph.nodes.map(node => (
-              <article key={node.id} style={NODE_CARD}>
-                <div style={ITEM_HEAD}>{nodeTypeLabel(node.type)} {node.date ? `· ${node.date}` : ''}</div>
-                <h3 style={NODE_TITLE}>{node.title}</h3>
-                <p style={P}>{node.summary}</p>
-                {node.tags.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-                    {node.tags.slice(0, 5).map(tag => <span key={tag} style={TAG}>{tag}</span>)}
-                  </div>
-                )}
-                <div style={SOURCE}>来源：{node.source}</div>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
     </div>
   )
 }
 
 function GraphFilter({ label, type }: { label: string; type?: KnowledgeNodeType }) {
-  const href = type ? `/spirit/knowledge?graphType=${type}` : '/spirit/knowledge'
+  const href = type ? `/spirit/knowledge?view=list&graphType=${type}` : '/spirit/knowledge?view=list'
   return <Link href={href} style={ACTION_LINK}>{label}</Link>
+}
+
+function TabLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      style={{
+        ...TAB_LINK,
+        borderColor: active ? 'var(--gold-line)' : 'var(--ink-trace)',
+        background: active ? 'var(--surface)' : 'transparent',
+        color: active ? 'var(--gold)' : 'var(--gold-dim)',
+      }}
+    >
+      {children}
+    </Link>
+  )
+}
+
+function resolveView(view?: string): KnowledgeView {
+  if (view === 'list' || view === 'audit') return view
+  return 'graph'
 }
 
 function RunDetail({ run }: { run: NonNullable<ReturnType<typeof getContextRun>> }) {
@@ -337,14 +368,9 @@ function domainLabel(domain: string) {
 
 function nodeTypeLabel(type: string) {
   const map: Record<string, string> = {
+    capability_domain: '能力方向',
+    capability: '能力点',
     blog: '博客',
-    skill: '技能卡',
-    preference: '偏好',
-    conversation_summary: '对话摘要',
-    daily_log: '日志',
-    weekly_pattern: '周规律',
-    vow: '誓愿',
-    context_run: '审计',
   }
   return map[type] ?? type
 }
@@ -445,6 +471,55 @@ const ACTION_LINK: React.CSSProperties = {
   fontSize: 12,
   letterSpacing: 2,
   padding: '6px 14px',
+}
+
+const TAB_BAR: React.CSSProperties = {
+  maxWidth: 1120,
+  margin: '0 auto 22px',
+  padding: '0 28px',
+  display: 'flex',
+  gap: 10,
+  flexWrap: 'wrap',
+  justifyContent: 'center',
+}
+
+const TAB_LINK: React.CSSProperties = {
+  border: '1px solid var(--ink-trace)',
+  color: 'var(--gold-dim)',
+  textDecoration: 'none',
+  fontFamily: 'var(--font-serif)',
+  fontSize: 13,
+  letterSpacing: 2,
+  padding: '8px 18px',
+}
+
+const WIDE_SECTION: React.CSSProperties = {
+  maxWidth: 1280,
+  margin: '0 auto',
+  padding: '0 28px 120px',
+}
+
+const SECTION: React.CSSProperties = {
+  maxWidth: 1120,
+  margin: '0 auto',
+  padding: '0 28px 120px',
+}
+
+const SECTION_HEAD: React.CSSProperties = {
+  border: '1px solid var(--ink-trace)',
+  borderBottom: 0,
+  background: 'var(--deep)',
+  padding: '18px',
+}
+
+const AUDIT_LAYOUT: React.CSSProperties = {
+  maxWidth: 1120,
+  margin: '0 auto',
+  padding: '0 28px 100px',
+  display: 'grid',
+  gridTemplateColumns: 'minmax(260px, 340px) minmax(0, 1fr)',
+  gap: 24,
+  alignItems: 'start',
 }
 
 const BLOCK_TITLE: React.CSSProperties = {

@@ -17,6 +17,9 @@ export function WorldBackground() {
     resize()
     window.addEventListener('resize', resize)
 
+    let raf = 0
+    let paused = false
+
     const ORIGINS = [
       { rx: 0.28, ry: 0.80 },
       { rx: 0.50, ry: 0.85 },
@@ -49,8 +52,11 @@ export function WorldBackground() {
       Array.from({ length: 5 }, () => mkParticle(o))
     )
 
-    let raf: number
     const tick = () => {
+      if (paused) {
+        raf = 0
+        return
+      }
       ctx.clearRect(0, 0, canvas.width, canvas.height)
       particles.forEach(p => {
         p.life++
@@ -79,11 +85,33 @@ export function WorldBackground() {
       })
       raf = requestAnimationFrame(tick)
     }
-    tick()
+
+    const start = () => {
+      if (!raf) raf = requestAnimationFrame(tick)
+    }
+
+    const updatePaused = () => {
+      const next = document.body.classList.contains('spirit-focus-active')
+      if (next === paused) return
+      paused = next
+      if (paused) {
+        if (raf) cancelAnimationFrame(raf)
+        raf = 0
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+      } else {
+        start()
+      }
+    }
+
+    const observer = new MutationObserver(updatePaused)
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] })
+    updatePaused()
+    if (!paused) start()
 
     return () => {
       window.removeEventListener('resize', resize)
-      cancelAnimationFrame(raf)
+      observer.disconnect()
+      if (raf) cancelAnimationFrame(raf)
     }
   }, [])
 
