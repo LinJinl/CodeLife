@@ -1,5 +1,96 @@
 [
   {
+    "id": "mp0k5g7vtl2m",
+    "url": "https://jimmysong.io/zh/book",
+    "title": "图书 | Jimmy Song",
+    "savedAt": "2026-05-11T02:03:35.131Z",
+    "summary": "Jimmy Song图书聚合页汇总AI原生、云原生与工程实践资料，适合作为系统化学习入口。",
+    "tags": [
+      "AI原生",
+      "云原生",
+      "教程聚合"
+    ],
+    "category": "其他"
+  },
+  {
+    "id": "movciq80lqna",
+    "url": "https://mariozechner.at",
+    "title": "{ Mario Zechner }",
+    "savedAt": "2026-05-07T10:31:06.816Z",
+    "summary": "Mario Zechner个人主页，展示其开发者背景、技术专长及近期关于AI编码代理等主题的博客文章。",
+    "tags": [
+      "个人主页",
+      "AI编码代理",
+      "技术博客"
+    ],
+    "category": "其他"
+  },
+  {
+    "id": "mobfbgyi2blp",
+    "url": "https://datawhalechina.github.io/happy-llm/#/./chapter2/%E7%AC%AC%E4%BA%8C%E7%AB%A0%20Transformer%E6%9E%B6%E6%9E%84",
+    "title": "Happy-LLM",
+    "savedAt": "2026-04-23T11:54:03.546Z",
+    "summary": "文章仅给出标题“Happy-LLM”和同名内容，信息过少，无法判断具体主题。",
+    "tags": [
+      "信息不足",
+      "LLM",
+      "标题占位"
+    ],
+    "category": "其他"
+  },
+  {
+    "id": "mobcqigtnpez",
+    "url": "https://lucumr.pocoo.org",
+    "title": "Blog | Armin Ronacher's Thoughts and Writings",
+    "savedAt": "2026-04-23T10:41:46.493Z",
+    "summary": "这是Armin Ronacher个人博客首页，汇总其近期关于AI、编程语言与工程实践的文章。",
+    "tags": [
+      "个人博客",
+      "人工智能",
+      "工程实践"
+    ],
+    "category": "其他"
+  },
+  {
+    "id": "moay9ysnfh9l",
+    "url": "https://simonwillison.net/",
+    "title": "Simon Willison’s Weblog",
+    "savedAt": "2026-04-23T03:56:59.879Z",
+    "summary": "Simon Willison 的个人技术博客，聚焦 LLM、AI 工具与开发者工作流的快速跟踪和实验分析。",
+    "tags": [
+      "LLM",
+      "技术博客",
+      "开发者工具"
+    ],
+    "category": "其他"
+  },
+  {
+    "id": "mo9nwsafc54r",
+    "url": "https://yeasy.gitbook.io/llm_internals/di-yi-bu-fen-ji-chu-pian/01_introduction/1.2_rnn_cnn_limits",
+    "title": "1.2 RNN 与 CNN：成就与瓶颈 | 大模型原理与架构 | LLM Internals",
+    "savedAt": "2026-04-22T06:19:02.583Z",
+    "summary": "文章概述RNN与CNN在序列建模中的优势与瓶颈，并引出Transformer的设计动机。",
+    "tags": [
+      "RNN",
+      "CNN",
+      "Transformer"
+    ],
+    "category": "算法"
+  },
+  {
+    "id": "mnyjiw19rvmi",
+    "url": "https://github.com/adongwanai/AgentGuide/blob/main/docs/02-tech-stack/agent-evaluation-complete-guide.md",
+    "title": "AI Agent 评估完全指南",
+    "savedAt": "2026-04-14T11:30:47.853Z",
+    "summary": "系统讲解AI Agent评估方法，强调任务化、多次试验、多维评分与完整系统视角。",
+    "tags": [
+      "AI Agent评估",
+      "大模型",
+      "工程实践"
+    ],
+    "category": "工程实践"
+  },
+  {
     "id": "mnokzhnkqnpf",
     "url": "https://www.anthropic.com/engineering/harness-design-long-running-apps",
     "title": "Harness design for long-running application development \\ Anthropic",

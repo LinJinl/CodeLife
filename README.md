@@ -5,6 +5,8 @@
 
 把程序员日常——写作、刷题、开源——映射进修仙世界观，量化为修为，驱动境界升级。
 
+它同时也是一个本地部署的个人博客 + 个人助手：博客、藏典、修炼日志、誓约、长期记忆和能力地图都存放在本地文件中，由器灵「青霄」按需读取和整理。
+
 ![道途 CodeLife 主界面](paper.png)
 
 ---
@@ -43,6 +45,17 @@
 器灵不会把所有历史原样塞进提示词。服务端会先判断本轮问题需要哪类记忆，再按预算注入摘要、最近原文和相关 Memory Pack。自动观察到的长期记忆默认先进入候选区，避免把一次性推测直接写进长期画像。
 
 更完整的设计见 [`MEMORY_SYSTEM.md`](./MEMORY_SYSTEM.md)。
+
+### 上下文审计
+
+每次对话都会生成一份上下文审计记录，说明青霄在回答前实际看见了什么：
+
+- 当前问题、页面上下文、今日历史、当前会话压缩情况
+- 本轮带入的长期记忆、记忆门控判断和工具范围
+- 实际进入 LangGraph 主助手的 Prompt 快照
+- 工具调用过程、返回摘要、最终回答预览
+
+专注模式左侧可打开「上下文审计」抽屉；`/spirit/knowledge?view=audit` 可按历史记录查看完整审计。
 
 ### 不止于聊天
 
@@ -138,7 +151,19 @@
 
 ### 藏经阁
 
-收藏技术文章，自动抓取正文生成摘要，本地向量索引。BM25 关键词 + 语义向量 RRF 融合检索。
+收藏技术文章，自动抓取正文生成摘要，本地向量索引。BM25 关键词 + 语义向量 RRF 融合检索。收藏前会规范化 URL，去掉 fragment、尾部斜杠和常见追踪参数，避免同一篇资料重复进入藏典。
+
+### 能力知图
+
+`/spirit/knowledge` 是个人能力地图，而不是通用知识图谱。当前以 `能力方向 → 能力点 → 关联博文` 组织内容，例如：
+
+- Agent：工具调用、任务规划、记忆与上下文治理
+- RAG：检索召回、向量化、切块重排与引用
+- LLM 基础：Transformer、预训练语言模型、Prompt 与推理行为
+- AI 工程化：可观测、流式交互、模型 API 集成
+- 产品与前端、后端与数据等工程能力
+
+能力点由本地 taxonomy 定义，系统按标题、标签、正文关键词把博客自动挂到相关能力点；点击能力点即可查看支撑博文。
 
 ### 功法台
 
@@ -285,6 +310,7 @@ CodeLife/
 │       ├── patterns/             每周规律分析
 │       ├── conversations/        对话历史
 │       ├── summaries/            对话摘要
+│       ├── context-runs/         每轮上下文审计记录
 │       ├── skills/               技能卡（可复用能力卡）
 │       ├── library/              藏经阁
 │       ├── persona.json          人格档案
@@ -293,19 +319,24 @@ CodeLife/
 └── src/
     ├── app/
     │   └── api/spirit/           器灵 API（chat / session / skills / preferences / vows …）
-    ├── app/
-    │   └── spirit/page.tsx       专注模式全屏界面（portal 渲染，日期侧栏 + 历史只读）
+    │   ├── spirit/page.tsx       专注模式全屏界面（portal 渲染，日期侧栏 + 历史只读）
+    │   └── spirit/knowledge/     能力知图 + 上下文审计页
     ├── components/
     │   ├── SpiritWidget.tsx      器灵悬浮面板（问道 / 法器 / 技能 / 偏好 四 Tab）
     │   ├── SpiritWidgetGuard.tsx 路由守卫，专注模式下隐藏浮层
     │   └── spirit/
+    │       ├── ContextAuditDrawer.tsx  上下文审计抽屉
+    │       ├── KnowledgeGraphWorkbench.tsx  能力地图工作台
     │       ├── MessageItem.tsx   消息渲染（流式 plain-text + 完成后 Markdown）
     │       ├── useSpiritChat.ts  对话状态 Hook
     │       └── types.ts          共享类型 + 斜杠命令
     └── lib/spirit/
         ├── langgraph/            多 Agent 编排
         ├── tools/                内置工具（按域分组）
-        ├── memory.ts             六层记忆读写
+        ├── context-audit.ts      上下文审计记录
+        ├── knowledge-graph.ts    能力地图数据构建
+        ├── memory-gate.ts        记忆检索门控
+        ├── memory.ts             记忆与本地数据读写
         ├── prompt.ts             System Prompt 构建
         ├── skill-extractor.ts    技能卡提炼
         └── preference-extractor.ts  偏好画像提炼

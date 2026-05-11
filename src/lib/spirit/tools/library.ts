@@ -43,6 +43,26 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 }
 
+function normalizeLibraryUrl(input?: string): string | null {
+  const raw = input?.trim()
+  if (!raw) return null
+  try {
+    const parsed = new URL(raw)
+    parsed.hash = ''
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (/^utm_/i.test(key) || ['fbclid', 'gclid'].includes(key.toLowerCase())) {
+        parsed.searchParams.delete(key)
+      }
+    }
+    parsed.searchParams.sort()
+    const pathname = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/+$/, '')
+    const search = parsed.searchParams.toString()
+    return `${parsed.protocol}//${parsed.hostname.toLowerCase()}${pathname}${search ? `?${search}` : ''}`
+  } catch {
+    return raw.split('#')[0].replace(/\/+$/, '') || null
+  }
+}
+
 async function analyzeContent(
   title:   string,
   content: string,
@@ -92,15 +112,27 @@ registerTool({
     required: ['title', 'content'],
   },
 }, async ({ title, content, url }) => {
+  const normalizedUrl = normalizeLibraryUrl(url as string | undefined)
+  const index = loadLibraryIndex()
+  const existing = normalizedUrl
+    ? index.find(entry => normalizeLibraryUrl(entry.url) === normalizedUrl)
+    : undefined
+
+  if (existing) {
+    return {
+      content: JSON.stringify({ ok: true, duplicate: true, entry: existing }),
+      brief: `藏经阁已存在「${existing.title}」，未重复收藏`,
+    }
+  }
+
   const analysis = await analyzeContent(title as string, content as string)
   const entry: LibraryEntry = {
     id:      generateId(),
-    url:     url as string | undefined,
+    url:     normalizedUrl ?? (url as string | undefined),
     title:   title as string,
     savedAt: new Date().toISOString(),
     ...analysis,
   }
-  const index = loadLibraryIndex()
   index.unshift(entry)
   saveIndex(index)
 

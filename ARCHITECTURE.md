@@ -6,7 +6,7 @@
 ┌─────────────────────────────────────────────────────────┐
 │                     浏览器 / 客户端                       │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  │
-│  │  首页     │  │  博客     │  │ GitHub   │  │LeetCode│  │
+│  │  首页     │  │  博客     │  │ 知图/藏典 │  │LeetCode│  │
 │  └──────────┘  └──────────┘  └──────────┘  └────────┘  │
 │                    ┌──────────────────┐                  │
 │                    │  SpiritWidget    │  ← 器灵对话组件   │
@@ -19,7 +19,8 @@
 │  ┌─────────────────────────────────────────────────┐    │
 │  │               API Routes                         │    │
 │  │  /api/spirit/chat   /api/spirit/context          │    │
-│  │  /api/spirit/session  /api/spirit/mcp            │    │
+│  │  /api/spirit/session  /api/spirit/context-runs   │    │
+│  │  /api/spirit/knowledge-graph  /api/spirit/mcp    │    │
 │  │  /api/spirit/approve  /api/spirit/sync           │    │
 │  │  /api/spirit/vows  /api/spirit/skills            │    │
 │  │  /api/spirit/preferences                         │    │
@@ -93,8 +94,13 @@ adapters/
 |------|------|
 | `protocol.ts` | SSE 事件类型定义（`SpiritEvent` 联合类型） |
 | `registry.ts` | 工具注册表，`registerTool()` + 写操作权限门控 |
-| `prompt.ts` | `buildSystemPrompt()` — 实时读取五层记忆，构建主控系统提示 |
-| `memory.ts` | 五层记忆读写：DailyLog / WeeklyPattern / PersonaProfile / Vow / Conversation |
+| `prompt.ts` | `buildSystemPrompt()` — 读取稳定记忆和当前状态，构建主控系统提示 |
+| `memory.ts` | 本地记忆与数据读写：DailyLog / WeeklyPattern / Preference / Vow / Conversation / Library |
+| `memory-gate.ts` | 记忆检索门控：判断本轮是否需要近期状态、誓约、技能卡、历史摘要等 Memory Pack |
+| `memory-pack.ts` | Memory Pack 类型与摘要裁剪，统一长期记忆注入格式 |
+| `context.ts` | 今日历史与当前会话压缩打包，控制长对话进入 Prompt 的体积 |
+| `context-audit.ts` | 每轮上下文审计记录：记忆门控、工具、Prompt 快照、最终回答预览 |
+| `knowledge-graph.ts` | 能力地图构建：能力方向 → 能力点 → 关联博文 |
 | `sync.ts` | `syncToday()` — 拉取数据生成 DailyLog；触发周期记忆生成 |
 | `hybrid-search.ts` | 混合检索：BM25 (MiniSearch) + 语义向量 (embedding)，RRF 融合排名 |
 | `shell-permissions.ts` | 三级权限状态机：令牌生成（createApprovalToken / createWriteToken）、消费（consumeToken / consumeWriteToken）、会话级批准状态 |
@@ -182,6 +188,8 @@ adapters/
 | `collect_document` | `library.ts` | 收藏文章到藏经阁（需权限确认） |
 | `search_library` | `library.ts` | 混合检索藏经阁 |
 | `list_library` | `library.ts` | 按分类列举藏经阁 |
+
+`collect_document` 在写入前会先规范化 URL：去掉 `#fragment`、尾部斜杠、`utm_*`、`fbclid`、`gclid` 等追踪参数，并按规范化结果查重；命中时直接返回已存在条目，不重复调用 AI 分析，也不写入索引。
 
 **system 域（按需）**
 
@@ -336,30 +344,41 @@ type SpiritEvent =
   | { type: 'task_start';  taskId: string; agent: string; display: string; desc: string }
   | { type: 'task_done';   taskId: string; agent: string }
   | { type: 'permission_request'; token: string; command: string; workdir: string; level: 'moderate'|'destructive'|'write' }
+  | { type: 'context_audit'; id: string }
   | { type: 'error';       message: string }
   | { type: 'done' }
 ```
 
-#### 3.6 五层记忆系统（memory.ts + prompt.ts + sync.ts）
+#### 3.6 记忆、上下文与审计（memory.ts + context.ts + memory-gate.ts + context-audit.ts）
 
-五层记忆，全部存储于 `content/spirit/`，构建 System Prompt 时实时读取：
+器灵记忆全部存储于 `content/spirit/`，构建每轮请求时实时读取。当前实现不再把所有历史原文直接塞进 Prompt，而是分为三步：
+
+1. `context.ts` 打包今日历史与当前会话，较早内容转摘要，最近内容保留原文。
+2. `memory-gate.ts` 按用户问题判断是否需要长期记忆，并预取相关 Memory Pack。
+3. `context-audit.ts` 保存本轮实际上下文，让用户事后能看到 AI 到底看见了什么。
 
 | 层级 | 文件位置 | 更新时机 | Prompt 角色 |
 |------|----------|----------|------------|
 | **DailyLog** | `logs/{date}.json` | 每次对话自动触发（今日无日志时执行） | Tier 1 今日快照 |
 | **WeeklyPattern** | `patterns/{year}-W{n}.json` | 每周一 sync 后 LLM 分析生成 | Tier 2 按需拉取 |
-| **PersonaProfile** | `persona.json` | sync 后检查，超 7 天则 LLM 重新分析 | Tier 1 人格/惯性 |
+| **Preference** | `preferences.json` | 候选晋升或显式保存 | Tier 1 长期偏好 |
+| **SkillCard** | `skills/index.json` | 候选晋升或显式保存 | Memory Pack 按需注入 |
+| **Library** | `library/index.json` + `library/embeddings.json` | `collect_document` 收藏 | 工具按需检索 |
 | **Vow** | `vows.json` | 用户通过工具创建/完成 | Tier 1 誓约进度 |
 | **Conversation** | `conversations/{date}.json` + `summaries/` | 每次对话后前端 POST 保存；摘要按需生成 | Tier 1 近期摘要（近5天） |
+| **ContextRun** | `context-runs/{date}/{id}.json` | 每次对话服务端生成 | 审计，不直接注入下一轮 |
 
 **Tier 1 / Tier 2 分层**：
 
 ```
-Tier 1（永远注入，~800 tokens）：
-  身份规则 + 时间 + 人格 + 今日摘要 + 誓约 + 近5天对话摘要
+Tier 1（稳定注入）：
+  身份规则 + 时间 + 今日摘要 + 活跃誓约 + 高置信偏好 + 近期摘要
 
 Tier 2（工具按需拉取）：
-  get_daily_logs / get_weekly_patterns / get_skill_cards / search_conversations
+  get_daily_logs / get_weekly_patterns / get_skill_cards / search_conversations / search_library
+
+Memory Pack（门控预取）：
+  daily_log / weekly_pattern / session_summary / vow / skill / note / conversation
 ```
 
 **同步触发流程**：
@@ -367,14 +386,72 @@ Tier 2（工具按需拉取）：
 ```
 POST /api/spirit/chat
   → syncToday()（今日无 DailyLog 时）
+  → buildTodayHistoryPack() + summarizeCurrentConversation()
+  → prefetchMemoryPack()
+  → createContextRun()
   → buildSystemPrompt()
+  → attachPromptSnapshot()
   → LangGraph
+  → attach tool/final answer/errors
+  → saveContextRun()
 
 GET /api/sync?source=blog（手动/cron/webhook）
   → revalidateTag('blog') → 下次访问重新拉 Notion
 ```
 
-#### 3.7 前端组件（SpiritWidget 及拆分模块）
+#### 3.7 上下文审计
+
+上下文审计解决的问题是：用户可以知道“本轮到底发给 AI 的上下文长什么样”，而不是只看到回答结果。
+
+**写入位置**：`content/spirit/context-runs/YYYY-MM-DD/{id}.json`
+
+**记录内容**：
+
+| 字段 | 内容 |
+|------|------|
+| `userMessage` | 本轮用户问题 |
+| `todayHistory` | 今日历史总数、选中条数、摘要条数、截断/去重状态 |
+| `currentConversation` | 当前请求携带的会话消息压缩统计 |
+| `memoryGate` | 记忆门控强度、意图、预取条目清单 |
+| `promptSnapshot` | 进入 LangGraph 主助手的实际消息栈，按来源标注 |
+| `tools` | 实际工具调用、入参摘要、结果摘要、链接 |
+| `planner` | direct / sequential / parallel 策略与任务数 |
+| `finalAnswerPreview` | 最终回答预览 |
+
+**展示入口**：
+
+- 专注模式 `/spirit` 左侧「上下文审计」按钮：`ContextAuditDrawer`
+- 能力知图页 `/spirit/knowledge?view=audit`
+- API：`GET /api/spirit/context-runs?limit=...` 和 `GET /api/spirit/context-runs?id=...`
+
+#### 3.8 能力地图（knowledge-graph.ts + KnowledgeGraphWorkbench）
+
+`/spirit/knowledge` 当前不是通用知识图谱，而是个人能力地图。它用一份本地 taxonomy 把博客归入能力方向和能力点：
+
+```
+能力方向（Agent / RAG / LLM 基础 / AI 工程化 / 产品与前端 / 后端与数据）
+    └─ 能力点（工具调用、任务规划、记忆上下文、检索召回、向量化、流式交互等）
+          └─ 关联博文（根据标题、标签、正文关键词自动匹配）
+```
+
+**节点类型**：
+
+| 类型 | 说明 |
+|------|------|
+| `capability_domain` | 能力方向 |
+| `capability` | 细粒度能力点 |
+| `blog` | 支撑该能力点的博文 |
+
+**关系类型**：
+
+| 类型 | 说明 |
+|------|------|
+| `contains` | 能力方向包含能力点 |
+| `evidenced_by` | 能力点由某篇博文支撑 |
+
+前端 `KnowledgeGraphWorkbench` 使用 `react-force-graph-2d` 渲染，支持筛选、搜索、悬浮提示和右侧详情；离开页面时会暂停 canvas animation，减少对专注模式输入和流式回答的影响。
+
+#### 3.9 前端组件（SpiritWidget 及拆分模块）
 
 原 `SpiritWidget.tsx` 单文件已拆分为以下模块：
 
@@ -383,7 +460,10 @@ GET /api/sync?source=blog（手动/cron/webhook）
 | `components/spirit/types.ts` | 共享类型：`ExecutionStep`、`PermissionRequest`、`Message`、`MCPInfo`、`SlashCommand`、`SLASH_COMMANDS` |
 | `components/spirit/MessageItem.tsx` | 单条消息渲染（memo 化，防止输入时重渲历史消息） |
 | `components/spirit/useSpiritChat.ts` | 聊天状态管理 Hook（SSE 消费、步骤追踪、权限确认逻辑） |
-| `components/spirit/SpiritWidget.tsx` | 顶层容器，布局 + 拖拽 + 斜杠命令 |
+| `components/SpiritWidget.tsx` | 浮层入口与面板容器 |
+| `app/spirit/page.tsx` | 专注模式全屏界面，日期侧栏、历史只读、上下文审计入口 |
+| `components/spirit/ContextAuditDrawer.tsx` | 上下文审计抽屉，展示最近回答、实际 Prompt 快照、工具与记忆清单 |
+| `components/spirit/KnowledgeGraphWorkbench.tsx` | 能力地图工作台，渲染能力方向、能力点和关联博文 |
 
 **消息结构**（定义于 `components/spirit/types.ts`）：
 
@@ -395,6 +475,7 @@ interface Message {
   steps?:             ExecutionStep[] // 工具执行步骤（含 links）
   permissionRequest?: PermissionRequest  // 权限确认弹窗状态
   cards?:             LibraryCard[]   // 藏经阁结构化结果
+  auditId?:           string          // 可跳转查看本轮上下文审计
 }
 
 interface ExecutionStep {
@@ -436,12 +517,17 @@ permission_request SSE 事件
 | `/api/spirit/chat` | POST | LangGraph Agent 主入口，返回 SSE 流；自动触发当日 sync |
 | `/api/spirit/approve` | POST | 权限令牌审批（shell / 写操作确认），返回 approvalToken |
 | `/api/spirit/context` | GET `?path=` | 按当前页面路径返回结构化上下文文本 |
+| `/api/spirit/context-runs` | GET / DELETE | 列出、读取或删除上下文审计记录 |
+| `/api/spirit/knowledge-graph` | GET / POST | 返回能力地图，可按节点类型和关键词过滤 |
 | `/api/spirit/session` | GET / POST | 读取 / 保存当日对话记录 |
 | `/api/spirit/mcp` | GET | 返回已加载 MCP 服务器 + 全部工具（含内置） |
 | `/api/spirit/mcp` | POST | 动态装载 MCP 包（需 `allowDynamicInstall: true`） |
 | `/api/spirit/vows` | GET / POST / PATCH / DELETE | 誓约 CRUD |
 | `/api/spirit/skills` | GET / POST / PATCH / DELETE | 技能卡 CRUD |
 | `/api/spirit/preferences` | GET / POST / PATCH / DELETE | 用户偏好 CRUD |
+| `/api/spirit/candidates` | GET / POST | 候选记忆列表、晋升和拒绝 |
+| `/api/spirit/tools` | GET | 列出当前内置工具与域信息 |
+| `/api/spirit/maintenance` | POST | 本地维护任务入口 |
 | `/api/spirit/sync` | POST | 触发数据同步 + 周期记忆生成 |
 | `/api/sync` | GET | 按需重置 ISR 缓存（`?source=blog\|github\|leetcode\|all`） |
 | `/api/webhooks/github` | POST | GitHub Push 事件 → 触发 commit 同步 |
@@ -457,6 +543,9 @@ permission_request SSE 事件
 用户输入
   → SpiritWidget.send()
   → POST /api/spirit/chat { messages }
+  → 打包今日历史 / 当前会话摘要 / 页面上下文
+  → 记忆门控预取 Memory Pack
+  → 创建 ContextRun 审计记录
   → classify() → 简单查询直接 direct，其他走 Planner
   → getCompiledGraph()
   → graph.streamEvents()
@@ -464,7 +553,9 @@ permission_request SSE 事件
     ├─ thinking 事件（<think> 块）
     ├─ tool_start / tool_done（含 brief + links）
     ├─ permission_request（写操作/高危 shell）
+    ├─ context_audit（返回本轮审计 id）
     └─ text / done
+  → 保存工具、Prompt 快照、最终回答预览到 ContextRun
   → SSE 推送 → SpiritWidget 消费，更新 UI
 ```
 
@@ -547,5 +638,8 @@ registerTool(definition, handler, {
 - **快速分类器**：`classify.ts` 纯规则匹配，命中时跳过 Planner LLM 调用（节省 ~1 次 RTT）
 - **域过滤**：默认仅注入 22 个工具（cultivation/memory/vow/knowledge/meta），web/library/system 按需追加，减少上下文长度
 - **博客/藏经阁混合检索**：BM25 + embedding 预索引，搜索不阻塞在线 embed 计算
-- **React.memo**：`MessageItem` memo 化，防止输入时重渲染历史消息
+- **藏经阁 URL 去重**：收藏前规范化 URL 并查重，重复资料不再触发 AI 分析和向量写入
+- **React.memo**：`MessageItem` 和 `ContextAuditDrawer` memo 化；消息对象不注入回调函数，防止输入时重渲染历史 Markdown
+- **背景动画暂停**：进入 `/spirit` 专注模式时给 `body` 加 `spirit-focus-active`，全局山水背景暂停 RAF 并隐藏
+- **图谱动画收敛**：能力地图开启 `autoPauseRedraw`，组件卸载时显式 `pauseAnimation()`，降低 canvas 对聊天输入的影响
 - **CSS 变量 + 直接 DOM 操作**：面板拖拽绕开 React 渲染循环，实现实时响应
